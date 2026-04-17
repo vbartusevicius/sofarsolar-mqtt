@@ -40,20 +40,17 @@ void MqttManager::handleMessage(const String& topic, const String& msg) {
         _inv.sendPassiveCommand(0);
     }
     else if (topic.endsWith("/set/auto")) {
-        if (msg == "battery_save") _bs.enable();
-        else {
-            _bs.disable();
-            int32_t window = msg.toInt();
-            if (window <= 0) window = 16384;
-            uint8_t pl[12] = {
-                0, 0, 0, 0,
-                (uint8_t)(((-window) >> 24) & 0xFF), (uint8_t)(((-window) >> 16) & 0xFF),
-                (uint8_t)(((-window) >>  8) & 0xFF), (uint8_t)((-window) & 0xFF),
-                (uint8_t)((window >> 24) & 0xFF), (uint8_t)((window >> 16) & 0xFF),
-                (uint8_t)((window >>  8) & 0xFF), (uint8_t)(window & 0xFF),
-            };
-            _mb.writeMultiple(MODBUS_SLAVE_ID, REG_PASSIVE_CTRL, 6, pl, 12);
-        }
+        _bs.disable();
+        int32_t limit = msg.toInt();
+        if (limit <= 0) limit = 16384;
+        uint8_t pl[12] = {
+            0, 0, 0, 0,
+            (uint8_t)(((-limit) >> 24) & 0xFF), (uint8_t)(((-limit) >> 16) & 0xFF),
+            (uint8_t)(((-limit) >>  8) & 0xFF), (uint8_t)((-limit) & 0xFF),
+            (uint8_t)((limit >> 24) & 0xFF), (uint8_t)((limit >> 16) & 0xFF),
+            (uint8_t)((limit >>  8) & 0xFF), (uint8_t)(limit & 0xFF),
+        };
+        _mb.writeMultiple(MODBUS_SLAVE_ID, REG_PASSIVE_CTRL, 6, pl, 12);
     }
 }
 

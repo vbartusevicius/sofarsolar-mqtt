@@ -45,14 +45,20 @@ Subscribe to `<deviceName>/state` for a JSON payload containing:
 ### Status
 `working_mode`, `battery_save`, `battery_save_target`, `modbus_ok`, `mqtt_ok`, `wifi_ok`, `uptime`
 
-### Commands (Passive Mode)
+### Commands
 
-| Topic | Payload | Description |
-|---|---|---|
-| `<deviceName>/set/battery_save` | `on` / `off` | Enable/disable battery saver |
-| `<deviceName>/set/charge` | `0`–`20000` (watts) | Force charge at specified power |
-| `<deviceName>/set/standby` | any | Set inverter to standby |
-| `<deviceName>/set/auto` | `battery_save` or power window | Auto mode or battery saver |
+These topics require the inverter to be in **Passive Mode**. All commands disable battery saver first, except `/set/battery_save` itself.
+
+- **`<deviceName>/set/battery_save`** — payload `on`, `true`, or `1` enables battery saver. Any other payload disables it.
+- **`<deviceName>/set/charge`** — payload is watts. Positive values charge the battery (e.g. `3000`), negative values discharge it (e.g. `-3000`).
+- **`<deviceName>/set/standby`** — payload is ignored. Sets inverter to standby (0 W output).
+- **`<deviceName>/set/auto`** — payload is watts (e.g. `5000`). Returns the inverter to autonomous mode with a charge/discharge limit of ±N watts. If the value is ≤ 0 or missing, defaults to ±16384 W (effectively unlimited).
+
+### Battery Saver
+
+When enabled, the firmware reads grid power every 3 seconds and adjusts the battery charge target so that only excess solar is stored. The battery **never discharges to the grid** — the charge target is clamped to 0–20000 W (`BSAVE_MAX_POWER`). Even at 0 W, the command is sent as a keep-alive (the inverter times out after ~60 s without a write).
+
+The battery saver has no user-configurable limits — it automatically tracks available solar surplus. The 20 kW ceiling matches the HYD 20 KTL inverter rating and can be changed in `Config.h`.
 
 
 ## Building
