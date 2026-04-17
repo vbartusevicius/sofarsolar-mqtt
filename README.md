@@ -1,113 +1,101 @@
-# Sofar2mqtt
-## A smart home interface for Sofar solar and battery inverters.
+# SofarSolar MQTT
 
-Supported models:  
+A smart home interface for Sofar HYD-xx00-KTL (HYDV2) solar and battery inverters.
 
-ME3000SP - Full support  
-HYD-xx00-ES - Full support  
-HYD-xx00-EP - Full support  
-HYD-xx00-KTL - Full support  
+Forked from [Sofar2mqtt](https://github.com/IgorYbema/Sofar2mqtt) and rewritten as a modular, maintainable firmware targeting the **HYD 20 KTL** (HYDV2 register map). Runs on an ESP8266 with a TFT touchscreen and RS485 transceiver (e.g. the [Tindie module](https://www.tindie.com/products/thehognl/esp12-f-with-rs485-modbus-and-optional-touch-tft/)).
 
-Sofar2mqtt is a remote control interface for Sofar solar and battery inverters.
-It allows remote control of the inverter and reports the invertor status, power usage, battery state etc for integration with smart home systems such as [Home Assistant](https://www.home-assistant.io/) and [Node-Red](https://nodered.org/).  
-For read only mode, it will send status messages without the inverter needing to be in passive mode.  
-It's designed to run on an ESP8266 microcontroller with a TTL to RS485 module such as MAX485 or MAX3485.  
-Designed to work with TTL modules with or without the DR and RE flow control pins. If your TTL module does not have these pins then just ignore the wire from D5. 
+## Features
 
-Subscribe your MQTT client to:
+- **Modbus RTU** polling of ~90 HYDV2 registers (system, grid, PV×2, battery×2, energy counters)
+- **MQTT** state publishing as a single JSON payload with configurable interval
+- **Home Assistant** auto-discovery for ~45 sensors + a battery-saver switch
+- **Battery Saver** mode — charges from excess solar, prevents grid discharge
+- **ILI9341 TFT** dashboard with XPT2046 touch toggle for battery saver
+- **Web dashboard** at `http://<device-ip>/` with live data, settings, and battery-saver control
+- **WiFiManager** captive portal for first-time WiFi + MQTT setup
+- **ArduinoOTA** for over-the-air firmware updates
+- **TaskManagerIO** cooperative task scheduling (no blocking delays in the main loop)
+- **ArduinoJson v7** for all JSON serialisation
 
-Sofar2mqtt/state (where Sofar2mqtt matches the hostname you configured in settings)
+## MQTT Topics
 
-Which provides:
+Subscribe to `<deviceName>/state` for a JSON payload containing:
 
-running_state  
-grid_voltage  
-grid_current  
-grid_freq  
-systemIO_power (AC side of inverter)  
-battery_power  (DC side of inverter)  
-battery_voltage  
-battery_current  
-batterySOC  
-battery_temp  
-battery_cycles  
-grid_power  
-consumption  
-solarPV  
-today_generation  
-today_exported  
-today_purchase  
-today_consumption  
-inverter_temp  
-inverterHS_temp  
-solarPVAmps  
+### System
+`run_state`, `inverter_temp`, `heatsink_temp`
 
-With the inverter in Passive Mode, send MQTT messages to:
+### Grid
+`grid_freq`, `inverter_power`, `grid_power`, `grid_voltage`, `load_power`
 
-Sofar2mqtt/set/standby   - send value "true"  
-Sofar2mqtt/set/auto   - send value "true" or "battery_save"  
-Sofar2mqtt/set/charge   - send values in the range 0-3000 (watts)  
-Sofar2mqtt/set/discharge   - send values in the range 0-3000 (watts) 
+### PV
+`pv1_voltage`, `pv1_current`, `pv1_power`, `pv2_voltage`, `pv2_current`, `pv2_power`, `pv_total`
 
-battery_save is a hybrid auto mode that will charge from excess solar but not discharge.
+### Battery 1
+`batt_voltage`, `batt_current`, `batt_power`, `batt_temp`, `batt_soc`, `batt_soh`, `batt_cycles`
 
-(c)Colin McGerty 2021 colin@mcgerty.co.uk
-Major version 2.0 rewrite by Adam Hill sidepipeukatgmaildotcom
-Thanks to Rich Platts for hybrid model code and testing.  
-calcCRC by angelo.compagnucci@gmail.com and jpmzometa@gmail.com  
-Version 3.x rewrite by Igor Ybema to work on his module with TFT screen and to add more inverter types
+### Battery 2
+`batt2_voltage`, `batt2_current`, `batt2_power`, `batt2_temp`, `batt2_soc`, `batt2_soh`, `batt2_cycles`
 
-# How to get a pre-made module
+### Battery Totals
+`batt_total_power`, `batt_avg_soc`, `batt_avg_soh`
 
-Just go ahead to this [Tindie](https://www.tindie.com/products/thehognl/esp12-f-with-rs485-modbus-and-optional-touch-tft/) store to get a pre-made module with this software.
+### Energy (kWh)
+`today_gen`, `total_gen`, `today_use`, `total_use`, `today_imp`, `total_imp`, `today_exp`, `total_exp`, `today_chg`, `total_chg`, `today_dis`, `total_dis`
 
-# How To Build your own module
+### Status
+`working_mode`, `battery_save`, `battery_save_target`, `modbus_ok`, `mqtt_ok`, `wifi_ok`, `uptime`
 
-If you want to build your own module you should follow [this readme](MODULE.md)
+### Commands (Passive Mode)
 
-# Flashing
-
-Easiest to get started is to flash a pre-compiled binary. Get a [regular ESP flasher](https://github.com/esphome/esphome-flasher/releases), attach a module on your computer and  flash a [binary](https://github.com/IgorYbema/Sofar2mqtt/tree/mod/binaries) to the module.
-If you want to compile your own version you'll need the libraries for the ESP8266. Follow [this guide](https://randomnerdtutorials.com/how-to-install-esp8266-board-arduino-ide/) if you haven't completed that step before.
-
-Add a few more libraries using the Manage Libraries menu:
-1. PubSubClient
-2. Adafruit GFX
-3. Adafruit SSD1306 Wemos Mini OLED
-4. DoubleResetDetect
-5. Adafruit_ILI9341
-6. XPT2046_Touchscreen
-
-(Even if you are not using the OLED or TFT screen, you should install the libraries or it will not compile.)
-
-...and upload.
-
-Run it on the desktop, not connected to your invertor, to test that wifi and mqtt are connected and see some messages in the serial monitor.
-The OLED screen should show "Online" to indicate a connection to WiFi and MQTT. It will alternate between "RS485 Error" and "CRC-FAULT" to indicate that the inverter is not connected.
-
-# Connect to Inverter
-
-Connect the Sofar2mqtt unit to a 5v micro USB power supply.
-Now connect wires A and B to the two wire RS485 input of your inverter, which is marked as 485s on the image of the inverter below.
-
-![ME3000SP Data Connections](pics/485s.jpg)
-
-# Troubleshooting
-
-Nothing on the OLED or TFT screen? Make sure you solder all the pins on the OLED and ESP8266, not just those with wires attached.  
-No communication with the inverter? Make sure the slave IDs match. Sofar2mqtt assumes slave ID 1 by default. You can change this around line 93 or in the inverter user interface. But they must be the same.   
-
-Here's what the various things on the OLED screen tell you:
-
-Line 1 is the device name, nothing else.  
-Line 2 will display "Connecting" during start up and lines 3 and 4 will show WIFI and MQTT getting connected.  
-Line 2 also has a dot that slowly flashes, once every few seconds. This is when a heartbeat message is being sent to the inverter.  
-If a message is read from the inverter that fails the CRC checksum, line 3 will display "CRC-FAULT". This could be caused by a loose or bad RS485 wire or by unsupported features. A few of these is normal, a lot could indicate a problem.  
-If no response is received to a heartbeat message, lines 3 and 4 show "RS485 ERROR". This could be caused by disconnected or reversed RS485 wires.  
-During start-up, line 4 shows the Sofar2mqtt software version. Check that you have the latest version at https://github.com/cmcgerty/Sofar2MQTT  
-In normal operation, line 2 shows "Online" which indicates that both WIFI and MQTT are still connected.  
-In normal operation, line 3 shows the inverter run state, Standby, Charging, Discharging etc.  
-In normal operation, line 4 shows the power in Watts in or out of the batteries when charging or discharging.  
+| Topic | Payload | Description |
+|---|---|---|
+| `<deviceName>/set/battery_save` | `on` / `off` | Enable/disable battery saver |
+| `<deviceName>/set/charge` | `0`–`20000` (watts) | Force charge at specified power |
+| `<deviceName>/set/standby` | any | Set inverter to standby |
+| `<deviceName>/set/auto` | `battery_save` or power window | Auto mode or battery saver |
 
 
+## Building
+
+This is a [PlatformIO](https://platformio.org/) project. All dependencies are managed automatically.
+
+```bash
+pio run            # compile
+pio run -t upload  # flash via USB
+```
+
+### Dependencies (auto-installed)
+
+- Adafruit ILI9341, Adafruit GFX Library
+- XPT2046_Touchscreen
+- PubSubClient
+- WiFiManager
+- ArduinoJson v7
+- TaskManagerIO
+
+## Hardware
+
+- **MCU:** ESP8266 (ESP-12F), 160 MHz
+- **Display:** ILI9341 TFT (SPI) + XPT2046 touch
+- **RS485:** Hardware Serial (TX=1, RX=3) to MAX485/MAX3485 transceiver
+- **Pins:** TFT CS=D1, DC=D2, LED=D8, Touch CS=0, Touch IRQ=2
+
+Connect RS485 A/B wires to the inverter's 485s port. Power the module from 5V USB.
+
+## Configuration
+
+On first boot (or after factory reset), the device starts a **SofarBatterySaver** WiFi access point. Connect to it and configure:
+
+- WiFi credentials
+- Device name (used as MQTT topic prefix and mDNS hostname)
+- MQTT host, port, username, password
+
+Settings can also be changed via the web UI at `http://<device-ip>/`.
+
+## Credits
+
+Originally based on [Sofar2mqtt](https://github.com/cmcgerty/Sofar2MQTT) by Colin McGerty.
+Version 2.0 rewrite by Adam Hill. Version 3.x by Igor Ybema (TFT, multi-inverter support).
+CRC routines by Angelo Compagnucci and JP Mzometa.
+HYDV2 rewrite and modularisation by Valentinas Bartusevičius.
 

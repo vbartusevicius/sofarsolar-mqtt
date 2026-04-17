@@ -1,1 +1,0 @@
-These are firmware files for the older model. Just use the version you want and upload it using the webpage of the current running software. If you happen to brick your system, you can recover your system by using the online tool on https://espressif.github.io/esptool-js/ and flash the binary to the flash address 0x0
