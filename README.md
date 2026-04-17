@@ -4,6 +4,8 @@ A smart home interface for Sofar HYD-xx00-KTL (HYDV2) solar and battery inverter
 
 Forked from [Sofar2mqtt](https://github.com/IgorYbema/Sofar2mqtt) and rewritten as a modular, maintainable firmware targeting the **HYD 20 KTL** (HYDV2 register map). Runs on an ESP8266 with a TFT touchscreen and RS485 transceiver (e.g. the [Tindie module](https://www.tindie.com/products/thehognl/esp12-f-with-rs485-modbus-and-optional-touch-tft/)).
 
+![Dashboard](docs/dashboard.png)
+
 ## Features
 
 - **Modbus RTU** polling of ~90 HYDV2 registers (system, grid, PV×2, battery×2, energy counters)
@@ -105,3 +107,4 @@ Version 2.0 rewrite by Adam Hill. Version 3.x by Igor Ybema (TFT, multi-inverter
 CRC routines by Angelo Compagnucci and JP Mzometa.
 HYDV2 rewrite and modularisation by Valentinas Bartusevičius.
 
+![Photo](docs/photo.jpg)

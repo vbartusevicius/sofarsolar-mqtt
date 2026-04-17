@@ -1,4 +1,5 @@
 .pio/*
 .cache/*
 .vscode/*
+.DS_Store
 compile_commands.json

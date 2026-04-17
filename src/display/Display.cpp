@@ -104,6 +104,8 @@ void Display::drawCentered(int16_t y, const String& text, uint8_t size,
 void Display::update(const InverterData& inv, const BatterySaver& bs,
                      bool wifiOk, bool modbusOk, bool mqttOk)
 {
+    if (!_screenOn) return;   // skip SPI writes while backlight is off
+
     unsigned long now = millis();
     if (!_needFullDraw && (now - _lastRedraw < INTERVAL_DISPLAY)) return;
     _lastRedraw = now;
@@ -226,6 +228,8 @@ bool Display::pollTouch() {
 
 // ── Dimming ────────────────────────────────────────────────────
 void Display::wake() {
+    _tft.begin();                // re-init SPI + ILI9341 command sequence
+    _tft.setRotation(2);
     _brightness = 32;
     analogWrite(PIN_TFT_LED, _brightness);
     _screenOn     = true;
