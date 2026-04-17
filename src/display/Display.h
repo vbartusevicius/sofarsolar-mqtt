@@ -14,6 +14,9 @@ public:
 
     void begin();
 
+    // Show a two-line centred message (used during boot).
+    void showSplash(const char* line1, const char* line2);
+
     // Redraw the dashboard (internally rate-limited).
     void update(const InverterData& inv, const BatterySaver& bs,
                 bool wifiOk, bool modbusOk, bool mqttOk);

@@ -26,13 +26,24 @@ static SofarWebServer webServer(eeConfig, bsave, mqttMgr);
 // ── Arduino entry points ────────────────────────────────────────
 void setup() {
     eeConfig.begin();
-    eeConfig.load();
+    bool configLoaded = eeConfig.load();
 
     display.begin();
     modbus.begin(MODBUS_BAUD);
     delay(500);
 
+    // If no saved config, try to use inverter SN as default device name
+    if (!configLoaded) {
+        if (inverter.readSerialNumber()) {
+            snprintf(eeConfig.name(), EE_NAME_LEN, "sofar_%s", inverter.serialNumber());
+        } else {
+            snprintf(eeConfig.name(), EE_NAME_LEN, "sofar_%06x", (unsigned int)(ESP.getChipId() & 0xFFFFFF));
+        }
+    }
+
+    display.showSplash("WiFi Setup", "SofarBatterySaver");
     setupWiFi(eeConfig);
+
     ArduinoOTA.setHostname(eeConfig.name());
     ArduinoOTA.begin();
     webServer.begin();
@@ -52,6 +63,7 @@ void setup() {
 
 void loop() {
     taskManager.runLoop();
+    wifiLoop();
     ArduinoOTA.handle();
     MDNS.update();
     webServer.handleClient();

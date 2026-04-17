@@ -2,37 +2,48 @@
 #include <WiFiManager.h>
 #include "config/EEConfig.h"
 
-static bool shouldSave = false;
-static void saveCallback() { shouldSave = true; }
+static WiFiManager       wm;
+static WiFiManagerParameter* pName;
+static WiFiManagerParameter* pHost;
+static WiFiManagerParameter* pPort;
+static WiFiManagerParameter* pUser;
+static WiFiManagerParameter* pPass;
+static EEConfig*             _cfg = nullptr;
+
+static void saveCallback() {
+    if (!_cfg) return;
+    strcpy(_cfg->name(),     pName->getValue());
+    strcpy(_cfg->mqttHost(), pHost->getValue());
+    strcpy(_cfg->mqttPort(), pPort->getValue());
+    strcpy(_cfg->mqttUser(), pUser->getValue());
+    strcpy(_cfg->mqttPass(), pPass->getValue());
+    _cfg->save();
+}
 
 void setupWiFi(EEConfig& cfg) {
-    WiFiManagerParameter pName("device", "Device name", cfg.name(),     EE_NAME_LEN);
-    WiFiManagerParameter pHost("mqtt",   "MQTT host",   cfg.mqttHost(), EE_HOST_LEN);
-    WiFiManagerParameter pPort("port",   "MQTT port",   cfg.mqttPort(), EE_PORT_LEN);
-    WiFiManagerParameter pUser("user",   "MQTT user",   cfg.mqttUser(), EE_USER_LEN);
-    WiFiManagerParameter pPass("pass",   "MQTT pass",   cfg.mqttPass(), EE_PASS_LEN);
+    _cfg = &cfg;
 
-    WiFiManager wm;
+    pName = new WiFiManagerParameter("device", "Device name", cfg.name(),     EE_NAME_LEN);
+    pHost = new WiFiManagerParameter("mqtt",   "MQTT host",   cfg.mqttHost(), EE_HOST_LEN);
+    pPort = new WiFiManagerParameter("port",   "MQTT port",   cfg.mqttPort(), EE_PORT_LEN);
+    pUser = new WiFiManagerParameter("user",   "MQTT user",   cfg.mqttUser(), EE_USER_LEN);
+    pPass = new WiFiManagerParameter("pass",   "MQTT pass",   cfg.mqttPass(), EE_PASS_LEN);
+
     wm.setSaveConfigCallback(saveCallback);
     wm.setConfigPortalTimeout(180);
     wm.setConnectTimeout(30);
     wm.setDebugOutput(false);
+    wm.setConfigPortalBlocking(false);
 
-    wm.addParameter(&pName);
-    wm.addParameter(&pHost);
-    wm.addParameter(&pPort);
-    wm.addParameter(&pUser);
-    wm.addParameter(&pPass);
+    wm.addParameter(pName);
+    wm.addParameter(pHost);
+    wm.addParameter(pPort);
+    wm.addParameter(pUser);
+    wm.addParameter(pPass);
 
-    if (!wm.autoConnect("SofarBatterySaver")) {
-        ESP.reset();
-    }
+    wm.autoConnect("SofarBatterySaver");
+}
 
-    strcpy(cfg.name(),     pName.getValue());
-    strcpy(cfg.mqttHost(), pHost.getValue());
-    strcpy(cfg.mqttPort(), pPort.getValue());
-    strcpy(cfg.mqttUser(), pUser.getValue());
-    strcpy(cfg.mqttPass(), pPass.getValue());
-
-    if (shouldSave) cfg.save();
+void wifiLoop() {
+    wm.process();
 }

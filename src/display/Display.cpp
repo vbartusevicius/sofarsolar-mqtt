@@ -1,4 +1,5 @@
 #include "Display.h"
+#include <ESP8266WiFi.h>
 #include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
 
@@ -41,6 +42,13 @@ void Display::begin() {
     _screenOn   = true;
     _lastTouch  = millis();
     _needFullDraw = true;
+}
+
+// ── Splash screen (shown during boot) ────────────────────────────
+void Display::showSplash(const char* line1, const char* line2) {
+    _tft.fillScreen(CLR_BG);
+    drawCentered(120, String(line1), 2, ILI9341_WHITE);
+    drawCentered(150, String(line2), 2, CLR_PV);
 }
 
 // ── Static chrome (header bar, dividers, labels) ───────────────
@@ -156,21 +164,27 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
     }
 
     // Status bar
-    _tft.fillRect(0, STATUS_Y, 240, 36, CLR_BG);
+    _tft.fillRect(0, STATUS_Y, 240, 42, CLR_BG);
     _tft.setTextSize(1);
     _tft.setTextColor(CLR_LABEL, CLR_BG);
     // WiFi
-    _tft.fillCircle(12, STATUS_Y + 14, 5, wifiOk ? CLR_ACTIVE : CLR_IMPORT);
-    _tft.setCursor(22, STATUS_Y + 10);
+    _tft.fillCircle(12, STATUS_Y + 6, 5, wifiOk ? CLR_ACTIVE : CLR_IMPORT);
+    _tft.setCursor(22, STATUS_Y + 2);
     _tft.print("WiFi");
     // RS485
-    _tft.fillCircle(62, STATUS_Y + 14, 5, modbusOk ? CLR_ACTIVE : CLR_IMPORT);
-    _tft.setCursor(72, STATUS_Y + 10);
+    _tft.fillCircle(62, STATUS_Y + 6, 5, modbusOk ? CLR_ACTIVE : CLR_IMPORT);
+    _tft.setCursor(72, STATUS_Y + 2);
     _tft.print("RS485");
     // MQTT
-    _tft.fillCircle(118, STATUS_Y + 14, 5, mqttOk ? CLR_ACTIVE : CLR_IMPORT);
-    _tft.setCursor(128, STATUS_Y + 10);
+    _tft.fillCircle(118, STATUS_Y + 6, 5, mqttOk ? CLR_ACTIVE : CLR_IMPORT);
+    _tft.setCursor(128, STATUS_Y + 2);
     _tft.print("MQTT");
+    // IP address
+    if (wifiOk) {
+        _tft.setTextColor(CLR_LABEL, CLR_BG);
+        _tft.setCursor(8, STATUS_Y + 20);
+        _tft.print(WiFi.localIP().toString());
+    }
 }
 
 // ── Draw toggle button ────────────────────────────────────────

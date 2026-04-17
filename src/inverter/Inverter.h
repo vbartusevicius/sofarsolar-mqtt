@@ -66,15 +66,18 @@ public:
     explicit Inverter(Modbus& mb) : _mb(mb) {}
 
     bool readSensors();
+    bool readSerialNumber();
     bool sendPassiveCommand(int32_t power);
 
     bool hasError() const              { return _error; }
     const InverterData& data() const   { return _data; }
+    const char* serialNumber() const   { return _sn; }
 
 private:
     Modbus&       _mb;
     InverterData  _data;
     bool          _error = true;
+    char          _sn[17] = "";
 
     bool readBlock(uint16_t start, uint8_t count, uint8_t* buf, uint8_t& sz);
 

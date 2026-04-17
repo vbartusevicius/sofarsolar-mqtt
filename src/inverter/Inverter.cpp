@@ -118,6 +118,22 @@ bool Inverter::readSensors() {
     return ok;
 }
 
+// ── Read serial number (once at boot) ─────────────────────────
+bool Inverter::readSerialNumber() {
+    uint8_t buf[16];
+    uint8_t sz;
+    if (!readBlock(REG_SN_START, REG_SN_COUNT, buf, sz) || sz < 16)
+        return false;
+    for (int i = 0; i < 16; i++) _sn[i] = (char)buf[i];
+    _sn[16] = '\0';
+    // Trim trailing nulls/spaces
+    for (int i = 15; i >= 0; i--) {
+        if (_sn[i] == '\0' || _sn[i] == ' ') _sn[i] = '\0';
+        else break;
+    }
+    return _sn[0] != '\0';
+}
+
 // ── Send passive-mode command ──────────────────────────────────
 bool Inverter::sendPassiveCommand(int32_t power) {
     int32_t minP = power;

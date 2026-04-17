@@ -84,6 +84,9 @@
 #define REG_CHG_TOTAL      0x0696   // U32 / 10  → kWh
 #define REG_DIS_TODAY      0x0698   // U32 / 100 → kWh
 #define REG_DIS_TOTAL      0x069A   // U32 / 10  → kWh
+// Serial number (8 regs = 16 ASCII chars)
+#define REG_SN_START       0x0445
+#define REG_SN_COUNT       8        // 0x0445-0x044C
 // Control
 #define REG_WORKING_MODE   0x1110
 #define REG_PASSIVE_CTRL   0x1187   // Write 6 regs (3×32-bit): PPC, min, max
