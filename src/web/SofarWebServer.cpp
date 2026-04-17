@@ -2,13 +2,14 @@
 #include <ArduinoJson.h>
 #include "Config.h"
 #include "config/EEConfig.h"
+#include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
 #include "network/MqttManager.h"
 #include "web/WebPage.h"
 
-SofarWebServer::SofarWebServer(EEConfig& cfg, BatterySaver& bs,
-                               MqttManager& mqtt)
-    : _server(80), _cfg(cfg), _bs(bs), _mqtt(mqtt)
+SofarWebServer::SofarWebServer(EEConfig& cfg, Inverter& inv,
+                               BatterySaver& bs, MqttManager& mqtt)
+    : _server(80), _cfg(cfg), _inv(inv), _bs(bs), _mqtt(mqtt)
 {}
 
 void SofarWebServer::begin() {
@@ -26,7 +27,8 @@ void SofarWebServer::begin() {
         doc["mqttport"]   = _cfg.mqttPort();
         doc["mqttuser"]   = _cfg.mqttUser();
         doc["mqttpass"]   = _cfg.mqttPass();
-        doc["deviceName"] = _cfg.name();
+        doc["deviceName"]    = _cfg.name();
+        doc["serialNumber"]  = _inv.serialNumber();
         String out;
         serializeJson(doc, out);
         _server.send(200, "application/json", out);
@@ -48,6 +50,35 @@ void SofarWebServer::begin() {
         _bs.toggle();
         JsonDocument doc;
         doc["battery_save"] = _bs.isActive();
+        String out;
+        serializeJson(doc, out);
+        _server.send(200, "application/json", out);
+    });
+
+    _server.on("/api/mode", [this]() {
+        if (_server.hasArg("v")) _mqtt.setMode(_server.arg("v"));
+        JsonDocument doc;
+        doc["mode"] = _mqtt.currentMode();
+        String out;
+        serializeJson(doc, out);
+        _server.send(200, "application/json", out);
+    });
+
+    _server.on("/api/charge", [this]() {
+        if (_server.hasArg("v")) _mqtt.setCharge(_server.arg("v").toInt());
+        JsonDocument doc;
+        doc["charge_power"] = _mqtt.chargePower();
+        doc["mode"] = _mqtt.currentMode();
+        String out;
+        serializeJson(doc, out);
+        _server.send(200, "application/json", out);
+    });
+
+    _server.on("/api/auto", [this]() {
+        if (_server.hasArg("v")) _mqtt.setAuto(_server.arg("v").toInt());
+        JsonDocument doc;
+        doc["auto_limit"] = _mqtt.autoLimit();
+        doc["mode"] = _mqtt.currentMode();
         String out;
         serializeJson(doc, out);
         _server.send(200, "application/json", out);

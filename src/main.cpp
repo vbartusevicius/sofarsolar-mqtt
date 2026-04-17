@@ -21,7 +21,7 @@ static Inverter       inverter(modbus);
 static BatterySaver   bsave(inverter);
 static Display        display;
 static MqttManager    mqttMgr(eeConfig, inverter, bsave, modbus);
-static SofarWebServer webServer(eeConfig, bsave, mqttMgr);
+static SofarWebServer webServer(eeConfig, inverter, bsave, mqttMgr);
 
 // ── Arduino entry points ────────────────────────────────────────
 void setup() {
@@ -32,9 +32,12 @@ void setup() {
     modbus.begin(MODBUS_BAUD);
     delay(500);
 
-    // If no saved config, try to use inverter SN as default device name
+    // Try to read inverter serial number via Modbus
+    inverter.readSerialNumber();
+
+    // If no saved config, use SN or ESP chip ID as default device name
     if (!configLoaded) {
-        if (inverter.readSerialNumber()) {
+        if (inverter.serialNumber()[0] != '\0') {
             snprintf(eeConfig.name(), EE_NAME_LEN, "sofar_%s", inverter.serialNumber());
         } else {
             snprintf(eeConfig.name(), EE_NAME_LEN, "sofar_%06x", (unsigned int)(ESP.getChipId() & 0xFFFFFF));
@@ -48,13 +51,17 @@ void setup() {
     ArduinoOTA.begin();
     webServer.begin();
     MDNS.begin(eeConfig.name());
-    mqttMgr.begin();
 
     // Schedule periodic tasks via TaskManagerIO
     taskManager.scheduleFixedRate(INTERVAL_SENSORS,    []() { inverter.readSensors(); });
     taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() { bsave.update(); });
     taskManager.scheduleFixedRate(INTERVAL_MQTT_PUB,   []() { mqttMgr.publish(); });
-    taskManager.scheduleFixedRate(INTERVAL_MQTT_RETRY, []() { mqttMgr.connect(); });
+    taskManager.scheduleFixedRate(INTERVAL_MQTT_RETRY, []() {
+        // Only start MQTT once Modbus is confirmed working
+        if (inverter.hasError()) return;
+        if (!mqttMgr.ready()) mqttMgr.begin();
+        mqttMgr.connect();
+    });
     taskManager.scheduleFixedRate(INTERVAL_DISPLAY,    []() {
         display.update(inverter.data(), bsave,
                        WiFi.isConnected(), !inverter.hasError(), mqttMgr.connected());

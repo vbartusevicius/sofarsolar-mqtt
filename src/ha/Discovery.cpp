@@ -137,6 +137,63 @@ static void publishSwitch(PubSubClient& mqtt, const char* deviceName)
     yield();
 }
 
+// ── Publish mode select ─────────────────────────────────────
+static void publishModeSelect(PubSubClient& mqtt, const char* deviceName)
+{
+    String chipId = String(ESP.getChipId(), HEX);
+    String uid    = "sofar_" + chipId + "_mode";
+    String topic  = "homeassistant/select/sofar_" + chipId + "/mode/config";
+
+    JsonDocument doc;
+    doc["name"]    = "Inverter Mode";
+    doc["uniq_id"] = uid;
+    doc["stat_t"]  = String(deviceName) + "/state";
+    doc["val_tpl"] = "{{ value_json.mode }}";
+    doc["cmd_t"]   = String(deviceName) + "/set/mode";
+    JsonArray opts = doc["ops"].to<JsonArray>();
+    opts.add("auto");
+    opts.add("charge");
+    opts.add("standby");
+    opts.add("battery_saver");
+    doc["icon"]    = "mdi:solar-power";
+    addDevice(doc, deviceName);
+
+    String payload;
+    serializeJson(doc, payload);
+    mqtt.publish(topic.c_str(), payload.c_str(), true);
+    yield();
+}
+
+// ── Publish number entity ───────────────────────────────────
+static void publishNumber(PubSubClient& mqtt, const char* deviceName,
+                          const char* id, const char* name,
+                          int32_t minVal, int32_t maxVal,
+                          const char* unit, const char* icon,
+                          const char* cmdSuffix)
+{
+    String chipId = String(ESP.getChipId(), HEX);
+    String uid    = "sofar_" + chipId + "_" + id;
+    String topic  = "homeassistant/number/sofar_" + chipId + "/" + id + "/config";
+
+    JsonDocument doc;
+    doc["name"]    = name;
+    doc["uniq_id"] = uid;
+    doc["stat_t"]  = String(deviceName) + "/state";
+    doc["val_tpl"] = "{{ value_json." + String(id) + " }}";
+    doc["cmd_t"]   = String(deviceName) + cmdSuffix;
+    doc["min"]     = minVal;
+    doc["max"]     = maxVal;
+    doc["step"]    = 100;
+    doc["unit_of_meas"] = unit;
+    doc["icon"]    = icon;
+    addDevice(doc, deviceName);
+
+    String payload;
+    serializeJson(doc, payload);
+    mqtt.publish(topic.c_str(), payload.c_str(), true);
+    yield();
+}
+
 // ── Public entry point ───────────────────────────────────────
 void publishHADiscovery(PubSubClient& mqtt, const char* deviceName) {
     if (!mqtt.connected()) return;
@@ -145,4 +202,11 @@ void publishHADiscovery(PubSubClient& mqtt, const char* deviceName) {
         publishSensor(mqtt, deviceName, SENSORS[i]);
     }
     publishSwitch(mqtt, deviceName);
+    publishModeSelect(mqtt, deviceName);
+    publishNumber(mqtt, deviceName,
+                  "charge_power", "Charge Power",
+                  -20000, 20000, "W", "mdi:battery-charging", "/set/charge");
+    publishNumber(mqtt, deviceName,
+                  "auto_limit", "Auto Power Limit",
+                  100, 20000, "W", "mdi:gauge", "/set/auto");
 }

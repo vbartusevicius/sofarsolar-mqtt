@@ -28,34 +28,61 @@ void MqttManager::callbackTrampoline(char* topic, byte* payload,
 
 void MqttManager::handleMessage(const String& topic, const String& msg) {
     if (topic.endsWith("/set/battery_save")) {
-        if (msg == "on" || msg == "true" || msg == "1")  _bs.enable();
-        else                                              _bs.disable();
+        if (msg == "on" || msg == "true" || msg == "1")  setMode("battery_saver");
+        else if (_bs.isActive())                          setMode("auto");
     }
-    else if (topic.endsWith("/set/charge")) {
-        _bs.disable();
-        _inv.sendPassiveCommand(msg.toInt());
+    else if (topic.endsWith("/set/charge"))  { setCharge(msg.toInt()); }
+    else if (topic.endsWith("/set/standby")) { setMode("standby"); }
+    else if (topic.endsWith("/set/auto"))    { setAuto(msg.toInt()); }
+    else if (topic.endsWith("/set/mode"))    { setMode(msg); }
+}
+
+void MqttManager::setMode(const String& mode) {
+    if (mode == "battery_saver") {
+        _bs.enable();
+        strncpy(_mode, "battery_saver", sizeof(_mode));
     }
-    else if (topic.endsWith("/set/standby")) {
+    else if (mode == "standby") {
         _bs.disable();
         _inv.sendPassiveCommand(0);
+        strncpy(_mode, "standby", sizeof(_mode));
     }
-    else if (topic.endsWith("/set/auto")) {
+    else if (mode == "charge") {
         _bs.disable();
-        int32_t limit = msg.toInt();
-        if (limit <= 0) limit = 16384;
-        uint8_t pl[12] = {
-            0, 0, 0, 0,
-            (uint8_t)(((-limit) >> 24) & 0xFF), (uint8_t)(((-limit) >> 16) & 0xFF),
-            (uint8_t)(((-limit) >>  8) & 0xFF), (uint8_t)((-limit) & 0xFF),
-            (uint8_t)((limit >> 24) & 0xFF), (uint8_t)((limit >> 16) & 0xFF),
-            (uint8_t)((limit >>  8) & 0xFF), (uint8_t)(limit & 0xFF),
-        };
-        _mb.writeMultiple(MODBUS_SLAVE_ID, REG_PASSIVE_CTRL, 6, pl, 12);
+        _inv.sendPassiveCommand(_chargePower);
+        strncpy(_mode, "charge", sizeof(_mode));
     }
+    else { // "auto" or default
+        _bs.disable();
+        setAuto(_autoLimit);
+    }
+}
+
+void MqttManager::setCharge(int32_t watts) {
+    _bs.disable();
+    _chargePower = watts;
+    _inv.sendPassiveCommand(watts);
+    strncpy(_mode, "charge", sizeof(_mode));
+}
+
+void MqttManager::setAuto(int32_t limit) {
+    _bs.disable();
+    if (limit <= 0) limit = 16384;
+    _autoLimit = limit;
+    uint8_t pl[12] = {
+        0, 0, 0, 0,
+        (uint8_t)(((-limit) >> 24) & 0xFF), (uint8_t)(((-limit) >> 16) & 0xFF),
+        (uint8_t)(((-limit) >>  8) & 0xFF), (uint8_t)((-limit) & 0xFF),
+        (uint8_t)((limit >> 24) & 0xFF), (uint8_t)((limit >> 16) & 0xFF),
+        (uint8_t)((limit >>  8) & 0xFF), (uint8_t)(limit & 0xFF),
+    };
+    _mb.writeMultiple(MODBUS_SLAVE_ID, REG_PASSIVE_CTRL, 6, pl, 12);
+    strncpy(_mode, "auto", sizeof(_mode));
 }
 
 void MqttManager::begin() {
     _mqtt.setBufferSize(1024);
+    _ready = true;
     connect();
 }
 
@@ -147,11 +174,16 @@ String MqttManager::buildJSON() {
     doc["working_mode"]        = d.workingMode;
     doc["battery_save"]        = _bs.isActive();
     doc["battery_save_target"] = _bs.targetPower();
+    // Control state
+    doc["mode"]          = _mode;
+    doc["charge_power"]  = _chargePower;
+    doc["auto_limit"]    = _autoLimit;
     // Status
-    doc["modbus_ok"]  = !_inv.hasError();
-    doc["mqtt_ok"]    = _mqtt.connected();
-    doc["wifi_ok"]    = WiFi.isConnected();
-    doc["uptime"]     = millis();
+    doc["serial_number"] = _inv.serialNumber();
+    doc["modbus_ok"]     = !_inv.hasError();
+    doc["mqtt_ok"]       = _mqtt.connected();
+    doc["wifi_ok"]       = WiFi.isConnected();
+    doc["uptime"]        = millis();
 
     String out;
     serializeJson(doc, out);

@@ -30,6 +30,8 @@ h2{font-size:1em;color:#94a3b8;border-bottom:1px solid #1e293b;padding:8px 0;mar
 .fr input{flex:1;padding:5px 8px;border:1px solid #334155;border-radius:4px;background:#0f172a;color:#e2e8f0;font-size:.85em}
 .fr button{padding:6px 14px;border:none;border-radius:4px;background:#1d4ed8;color:#fff;cursor:pointer;font-size:.85em}
 .fr button:hover{background:#2563eb}
+.fr select{flex:1;padding:5px 8px;border:1px solid #334155;border-radius:4px;background:#0f172a;color:#e2e8f0;font-size:.85em}
+.ctrl{background:#1e293b;padding:12px;border-radius:8px}
 .g{color:#22c55e}.r{color:#ef4444}.y{color:#eab308}.c{color:#22d3ee}.o{color:#f97316}.w{color:#e2e8f0}
 </style></head><body>
 <div class="hdr"><h1>Sofar Battery Saver</h1>
@@ -48,6 +50,14 @@ h2{font-size:1em;color:#94a3b8;border-bottom:1px solid #1e293b;padding:8px 0;mar
 
 <div class="section"><h2>Energy Today / Total</h2>
 <div class="grid" id="eg"></div></div>
+
+<div class="section"><h2>Inverter Control</h2>
+<div class="ctrl">
+<div class="fr"><label>Mode</label>
+<select id="cm" onchange="sm(this.value)"><option value="auto">Auto</option><option value="charge">Charge</option><option value="standby">Standby</option><option value="battery_saver">Battery Saver</option></select></div>
+<div class="fr"><label>Charge W</label><input id="cp" type="number" min="-20000" max="20000" step="100" value="0"><button onclick="sc()">Set</button></div>
+<div class="fr"><label>Auto Limit W</label><input id="al" type="number" min="100" max="20000" step="100" value="16384"><button onclick="sa()">Set</button></div>
+</div></div>
 
 <div class="section"><h2>MQTT Settings</h2>
 <form id="sf" onsubmit="return ss()">
@@ -90,6 +100,9 @@ var b=document.getElementById("bsb");var bs=d.battery_save;
 b.textContent="Battery Saver: "+(bs?"ON":"OFF");
 b.className=bs?"btn-on":"btn-off";
 document.getElementById("bst").textContent=bs?"Target: "+d.battery_save_target+" W":"";
+if(d.mode)document.getElementById("cm").value=d.mode;
+if(d.charge_power!==undefined)document.getElementById("cp").value=d.charge_power;
+if(d.auto_limit!==undefined)document.getElementById("al").value=d.auto_limit;
 var h="";for(var k in M){if(k in d)h+=c(k,d[k],M);}
 document.getElementById("mg").innerHTML=h;
 var eh="";for(var k in E){if(k in d)eh+=c(k,d[k],E);}
@@ -97,6 +110,9 @@ document.getElementById("eg").innerHTML=eh;
 }).catch(function(){document.getElementById("dw").className="dot off";});}
 
 function tb(){fetch("/api/battery_save").then(function(){u()});}
+function sm(v){fetch("/api/mode?v="+v).then(function(){u()});}
+function sc(){fetch("/api/charge?v="+document.getElementById("cp").value).then(function(){u()});}
+function sa(){fetch("/api/auto?v="+document.getElementById("al").value).then(function(){u()});}
 function ss(){
 var f=document.getElementById("sf");
 var p=new URLSearchParams(new FormData(f)).toString();
