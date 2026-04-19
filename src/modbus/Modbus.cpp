@@ -66,9 +66,20 @@ int Modbus::listen(uint8_t* frame, uint8_t& frameSize,
     }
 
     frameSize = idx;
-    if (frameSize < 5) return -2;
-    if (!checkCRC(frame, frameSize)) return -1;
-    if (fnCode & 0x80) return frame[2];    // Modbus error code
+    if (frameSize < 5) {
+        appLog.add("MB", "Resp timeout, got " + String(frameSize) + "B");
+        return -2;
+    }
+    if (!checkCRC(frame, frameSize)) {
+        appLog.add("MB", "Resp CRC fail, fc=0x" + String(fnCode, HEX)
+                   + " len=" + String(frameSize));
+        return -1;
+    }
+    if (fnCode & 0x80) {
+        appLog.add("MB", "Resp err fc=0x" + String(fnCode, HEX)
+                   + " code=" + String(frame[2]));
+        return frame[2];
+    }
 
     // Extract data bytes for FC03 read responses
     if (fnCode == FC_READ_HOLDING && frameSize >= 5) {
