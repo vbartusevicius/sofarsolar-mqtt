@@ -1,5 +1,6 @@
 #include "Inverter.h"
 #include "Config.h"
+#include "util/AppLog.h"
 
 // ── Bulk-read wrapper ─────────────────────────────────────────
 bool Inverter::readBlock(uint16_t start, uint8_t count,
@@ -115,6 +116,14 @@ bool Inverter::readSensors() {
 
     _data.valid = ok;
     _error = !ok;
+    if (ok) {
+        appLog.add("INV", "OK soc=" + String(_data.batterySOC)
+                   + " grid=" + String(_data.gridPower)
+                   + " pv=" + String(_data.pvPower)
+                   + " batt=" + String(_data.batteryPower));
+    } else {
+        appLog.add("INV", "readSensors partial fail");
+    }
     return ok;
 }
 
@@ -122,8 +131,10 @@ bool Inverter::readSensors() {
 bool Inverter::readSerialNumber() {
     uint8_t buf[16];
     uint8_t sz;
-    if (!readBlock(REG_SN_START, REG_SN_COUNT, buf, sz) || sz < 16)
+    if (!readBlock(REG_SN_START, REG_SN_COUNT, buf, sz) || sz < 16) {
+        appLog.add("INV", "SN read failed");
         return false;
+    }
     for (int i = 0; i < 16; i++) _sn[i] = (char)buf[i];
     _sn[16] = '\0';
     // Trim trailing nulls/spaces

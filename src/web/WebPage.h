@@ -33,6 +33,7 @@ h2{font-size:1em;color:#94a3b8;border-bottom:1px solid #1e293b;padding:8px 0;mar
 .fr select{flex:1;padding:5px 8px;border:1px solid #334155;border-radius:4px;background:#0f172a;color:#e2e8f0;font-size:.85em}
 .ctrl{background:#1e293b;padding:12px;border-radius:8px}
 .g{color:#22c55e}.r{color:#ef4444}.y{color:#eab308}.c{color:#22d3ee}.o{color:#f97316}.w{color:#e2e8f0}
+.logbox{background:#0a0f1a;border:1px solid #1e293b;border-radius:6px;padding:8px;font-family:monospace;font-size:.75em;color:#94a3b8;white-space:pre-wrap;max-height:600px;overflow-y:auto}
 </style></head><body>
 <div class="hdr"><h1>Sofar Battery Saver</h1>
 <div class="dots">
@@ -68,6 +69,9 @@ h2{font-size:1em;color:#94a3b8;border-bottom:1px solid #1e293b;padding:8px 0;mar
 <div class="fr"><label>Device Name</label><input id="sd" name="deviceName"></div>
 <div class="fr"><button type="submit">Save &amp; Reboot</button></div>
 </form></div>
+
+<div class="section"><h2>System Log</h2>
+<div class="logbox" id="lb">Loading...</div></div>
 
 <script>
 var M={run_state:["Run State","w"],inverter_temp:["Inv Temp \u00b0C","w"],heatsink_temp:["HS Temp \u00b0C","w"],
@@ -118,7 +122,10 @@ var f=document.getElementById("sf");
 var p=new URLSearchParams(new FormData(f)).toString();
 fetch("/command?"+p).then(function(){alert("Saved. Rebooting...");});return false;}
 
-u();setInterval(u,5000);
+function ul(){fetch("/log").then(function(r){return r.text()}).then(function(t){
+var lb=document.getElementById("lb");lb.textContent=t||"(empty)";
+lb.scrollTop=lb.scrollHeight;});}
+u();ul();setInterval(u,5000);setInterval(ul,5000);
 fetch("/settings").then(function(r){return r.json()}).then(function(d){
 document.getElementById("sh").value=d.mqtthost||"";
 document.getElementById("sp").value=d.mqttport||"";

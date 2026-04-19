@@ -6,6 +6,7 @@
 #include "control/BatterySaver.h"
 #include "modbus/Modbus.h"
 #include "ha/Discovery.h"
+#include "util/AppLog.h"
 
 MqttManager* MqttManager::_instance = nullptr;
 
@@ -81,8 +82,9 @@ void MqttManager::setAuto(int32_t limit) {
 }
 
 void MqttManager::begin() {
-    _mqtt.setBufferSize(1024);
+    _mqtt.setBufferSize(2048);
     _ready = true;
+    appLog.add("MQTT", "begin, buf=2048");
     connect();
 }
 
@@ -91,28 +93,47 @@ void MqttManager::connect() {
 
     String clientId  = String(_cfg.name()) + "-" + String(ESP.getChipId(), HEX);
     String willTopic = String(_cfg.name()) + "/status";
+    int port = atoi(_cfg.mqttPort());
 
-    _mqtt.setServer(_cfg.mqttHost(), atoi(_cfg.mqttPort()));
+    appLog.add("MQTT", "Connecting to " + String(_cfg.mqttHost()) + ":" + String(port)
+               + " client=" + clientId);
+
+    _mqtt.setServer(_cfg.mqttHost(), port);
     _mqtt.setCallback(callbackTrampoline);
 
     if (_mqtt.connect(clientId.c_str(), _cfg.mqttUser(), _cfg.mqttPass(),
                       willTopic.c_str(), 0, true, "offline"))
     {
+        appLog.add("MQTT", "Connected OK");
         _mqtt.publish(willTopic.c_str(), "online", true);
         String sub = String(_cfg.name()) + "/set/#";
         _mqtt.subscribe(sub.c_str());
+        appLog.add("MQTT", "Subscribed: " + sub);
         if (!_haDiscoverySent) {
             publishHADiscovery(_mqtt, _cfg.name());
             _haDiscoverySent = true;
+            appLog.add("MQTT", "HA discovery sent");
         }
+    } else {
+        appLog.add("MQTT", "Connect FAILED, rc=" + String(_mqtt.state()));
     }
 }
 
 void MqttManager::publish() {
-    if (!_mqtt.connected()) return;
+    if (!_ready) return;
+    if (!_mqtt.connected()) {
+        appLog.add("MQTT", "Pub skip: disconnected rc=" + String(_mqtt.state()));
+        return;
+    }
     String json  = buildJSON();
     String topic = String(_cfg.name()) + "/state";
-    _mqtt.publish(topic.c_str(), json.c_str());
+    bool ok = _mqtt.publish(topic.c_str(), json.c_str());
+    if (ok) {
+        appLog.add("MQTT", "Pub OK len=" + String(json.length()));
+    } else {
+        appLog.add("MQTT", "Pub FAIL len=" + String(json.length())
+                   + " rc=" + String(_mqtt.state()));
+    }
 }
 
 String MqttManager::buildJSON() {

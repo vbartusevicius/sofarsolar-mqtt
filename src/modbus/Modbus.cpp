@@ -1,4 +1,5 @@
 #include "Modbus.h"
+#include "util/AppLog.h"
 
 void Modbus::begin(unsigned long baud) {
     Serial.begin(baud);
@@ -97,7 +98,12 @@ bool Modbus::readHolding(uint8_t slaveId, uint16_t reg, uint8_t count,
 
     uint8_t resp[MAX_RESP];
     uint8_t respSize = 0;
-    return listen(resp, respSize, data, dataSize) == 0;
+    int rc = listen(resp, respSize, data, dataSize);
+    if (rc != 0) {
+        appLog.add("MB", "RD 0x" + String(reg, HEX) + " x" + String(count)
+                   + " FAIL rc=" + String(rc));
+    }
+    return rc == 0;
 }
 
 // ── Write Multiple Registers (FC 0x10) ─────────────────────────
@@ -126,5 +132,10 @@ bool Modbus::writeMultiple(uint8_t slaveId, uint16_t reg, uint8_t regCount,
 
     uint8_t resp[MAX_RESP], respData[MAX_RESP];
     uint8_t respSize = 0, respDataSize = 0;
-    return listen(resp, respSize, respData, respDataSize) == 0;
+    int rc = listen(resp, respSize, respData, respDataSize);
+    if (rc != 0) {
+        appLog.add("MB", "WR 0x" + String(reg, HEX) + " x" + String(regCount)
+                   + " FAIL rc=" + String(rc));
+    }
+    return rc == 0;
 }

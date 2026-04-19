@@ -6,6 +6,7 @@
 #include "control/BatterySaver.h"
 #include "network/MqttManager.h"
 #include "web/WebPage.h"
+#include "util/AppLog.h"
 
 SofarWebServer::SofarWebServer(EEConfig& cfg, Inverter& inv,
                                BatterySaver& bs, MqttManager& mqtt)
@@ -82,6 +83,10 @@ void SofarWebServer::begin() {
         String out;
         serializeJson(doc, out);
         _server.send(200, "application/json", out);
+    });
+
+    _server.on("/log", [this]() {
+        _server.send(200, "text/plain", appLog.text());
     });
 
     _server.begin();
