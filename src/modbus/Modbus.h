@@ -28,4 +28,4 @@ private:
     bool checkCRC(uint8_t* frame, uint8_t len);
 };
 
-#endif // SOFAR_MODBUS_H
+#endif

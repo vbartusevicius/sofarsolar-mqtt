@@ -36,6 +36,7 @@ bool Inverter::readSensors() {
         _data.inverterTemp = s16(sys, REG_INV_TEMP, REG_SYS_START);
         _data.heatsinkTemp = s16(sys, REG_HS_TEMP,  REG_SYS_START);
     } else { ok = false; }
+    yield();
 
     // Grid block (44 regs)
     uint8_t grid[88];
@@ -46,6 +47,7 @@ bool Inverter::readSensors() {
         _data.gridVoltage   = u16(grid, REG_GRID_VOLTAGE, REG_GRID_START) / 10.0f;
         _data.loadPower     = s16(grid, REG_LOAD_POWER,   REG_GRID_START) * 10L;
     } else { ok = false; }
+    yield();
 
     // PV block (6 regs)
     uint8_t pv[12];
@@ -57,12 +59,14 @@ bool Inverter::readSensors() {
         _data.pv2Current = u16(pv, REG_PV2_A, REG_PV_START) / 100.0f;
         _data.pv2Power   = u16(pv, REG_PV2_W, REG_PV_START) * 10L;
     } else { ok = false; }
+    yield();
 
     // PV total (1 reg, separate block)
     uint8_t pvt[2];
     if (readBlock(REG_PV_TOTAL, 1, pvt, sz) && sz >= 2) {
         _data.pvPower = u16(pvt, REG_PV_TOTAL, REG_PV_TOTAL) * 100L;
     } else { ok = false; }
+    yield();
 
     // Battery block (14 regs)
     uint8_t bat[28];
@@ -82,6 +86,7 @@ bool Inverter::readSensors() {
         _data.batt2SOH     = u16(bat, REG_BATT2_SOH, REG_BATT_START);
         _data.batt2Cycles  = u16(bat, REG_BATT2_CYC, REG_BATT_START);
     } else { ok = false; }
+    yield();
 
     // Battery totals (3 regs)
     uint8_t bt[6];
@@ -90,6 +95,7 @@ bool Inverter::readSensors() {
         _data.battAvgSOC     = u16(bt, REG_BATT_AVG_SOC, REG_BATTTOT_START);
         _data.battAvgSOH     = u16(bt, REG_BATT_AVG_SOH, REG_BATTTOT_START);
     } else { ok = false; }
+    yield();
 
     // Energy block (24 regs, U32 values)
     uint8_t en[48];
@@ -107,6 +113,7 @@ bool Inverter::readSensors() {
         _data.todayDischarged  = u32(en, REG_DIS_TODAY, REG_ENERGY_START) / 100.0f;
         _data.totalDischarged  = u32(en, REG_DIS_TOTAL, REG_ENERGY_START) / 10.0f;
     } else { ok = false; }
+    yield();
 
     // Working mode (1 reg)
     uint8_t wm[2];
@@ -117,10 +124,10 @@ bool Inverter::readSensors() {
     _data.valid = ok;
     _error = !ok;
     if (ok) {
-        appLog.add("INV", "OK soc=" + String(_data.batterySOC)
-                   + " grid=" + String(_data.gridPower)
-                   + " pv=" + String(_data.pvPower)
-                   + " batt=" + String(_data.batteryPower));
+        char lb[64];
+        snprintf(lb, sizeof(lb), "OK soc=%d grid=%d pv=%d batt=%d",
+                 _data.batterySOC, (int)_data.gridPower, (int)_data.pvPower, (int)_data.batteryPower);
+        appLog.add("INV", lb);
     } else {
         appLog.add("INV", "readSensors partial fail");
     }

@@ -22,7 +22,6 @@ public:
     bool ready()     const { return _ready; }
     bool connected() { return _mqtt.connected(); }
 
-    // Control commands (callable from web + MQTT)
     void setMode(const String& mode);
     void setCharge(int32_t watts);
     void setAuto(int32_t limit);
@@ -52,4 +51,4 @@ private:
     void handleMessage(const String& topic, const String& msg);
 };
 
-#endif // SOFAR_MQTT_MANAGER_H
+#endif

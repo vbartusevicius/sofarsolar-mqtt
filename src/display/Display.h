@@ -36,6 +36,7 @@ private:
     bool          _touchedPrev  = false;
     unsigned long _lastTouch    = 0;
     unsigned long _lastRedraw   = 0;
+    unsigned long _lastDimStep  = 0;
     bool          _needFullDraw = true;
 
     // Cached values for partial-redraw optimisation
@@ -56,4 +57,4 @@ private:
     void wake();
 };
 
-#endif // SOFAR_DISPLAY_H
+#endif

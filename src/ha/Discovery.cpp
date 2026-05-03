@@ -2,7 +2,6 @@
 #include <ESP8266WiFi.h>
 #include <ArduinoJson.h>
 
-// ── Sensor descriptor (stored in flash) ──────────────────────
 struct HaSensor {
     const char* id;
     const char* name;
@@ -11,7 +10,6 @@ struct HaSensor {
     const char* stateClass; // "measurement" | "total_increasing" | nullptr
 };
 
-// Macro to keep table readable
 #define S(i, n, u, dc, sc) { i, n, u, dc, sc }
 
 static const HaSensor SENSORS[] PROGMEM = {
@@ -73,7 +71,6 @@ static const HaSensor SENSORS[] PROGMEM = {
 
 static const uint8_t SENSOR_COUNT = sizeof(SENSORS) / sizeof(SENSORS[0]);
 
-// ── Add shared device block to doc ──────────────────────────
 static void addDevice(JsonDocument& doc, const char* deviceName) {
     String chipId = String(ESP.getChipId(), HEX);
     JsonObject dev = doc["dev"].to<JsonObject>();
@@ -86,7 +83,6 @@ static void addDevice(JsonDocument& doc, const char* deviceName) {
     dev["cu"]   = "http://" + WiFi.localIP().toString();
 }
 
-// ── Publish one sensor config ────────────────────────────────
 static void publishSensor(PubSubClient& mqtt, const char* deviceName,
                           const HaSensor& s)
 {
@@ -113,7 +109,6 @@ static void publishSensor(PubSubClient& mqtt, const char* deviceName,
     yield();
 }
 
-// ── Publish battery-saver switch ─────────────────────────────
 static void publishSwitch(PubSubClient& mqtt, const char* deviceName)
 {
     String chipId = String(ESP.getChipId(), HEX);
@@ -137,7 +132,6 @@ static void publishSwitch(PubSubClient& mqtt, const char* deviceName)
     yield();
 }
 
-// ── Publish mode select ─────────────────────────────────────
 static void publishModeSelect(PubSubClient& mqtt, const char* deviceName)
 {
     String chipId = String(ESP.getChipId(), HEX);
@@ -164,7 +158,6 @@ static void publishModeSelect(PubSubClient& mqtt, const char* deviceName)
     yield();
 }
 
-// ── Publish number entity ───────────────────────────────────
 static void publishNumber(PubSubClient& mqtt, const char* deviceName,
                           const char* id, const char* name,
                           int32_t minVal, int32_t maxVal,
@@ -194,7 +187,6 @@ static void publishNumber(PubSubClient& mqtt, const char* deviceName,
     yield();
 }
 
-// ── Public entry point ───────────────────────────────────────
 void publishHADiscovery(PubSubClient& mqtt, const char* deviceName) {
     if (!mqtt.connected()) return;
 

@@ -3,15 +3,12 @@
 
 #include <Arduino.h>
 
-// ── Hardware Pins (ESP8266 TFT board from Tindie) ──────────────
 #define PIN_TFT_CS    D1
 #define PIN_TFT_DC    D2
 #define PIN_TFT_LED   D8
 #define PIN_TOUCH_CS  0
 #define PIN_TOUCH_IRQ 2
 
-// ── Modbus / RS-485 ────────────────────────────────────────────
-// Hardware Serial (TX=1, RX=3) is wired to the RS-485 transceiver.
 #define MODBUS_SLAVE_ID   0x01
 #define MODBUS_BAUD       9600
 #define MODBUS_TIMEOUT_MS 400       // per-byte wait
@@ -19,8 +16,6 @@
 #define FC_READ_HOLDING   0x03
 #define FC_WRITE_MULTI    0x10
 
-// ── Sofar HYDV2 Register Map ────────────────────────────────────
-// Bulk-read block definitions
 #define REG_SYS_START      0x0404
 #define REG_SYS_COUNT      23       // 0x0404-0x041A
 #define REG_GRID_START     0x0484
@@ -91,7 +86,6 @@
 #define REG_WORKING_MODE   0x1110
 #define REG_PASSIVE_CTRL   0x1187   // Write 6 regs (3×32-bit): PPC, min, max
 
-// ── Timing (milliseconds) ──────────────────────────────────────
 #define INTERVAL_BSAVE     3000
 #define INTERVAL_SENSORS   5000
 #define INTERVAL_DISPLAY   1000
@@ -99,10 +93,8 @@
 #define INTERVAL_MQTT_RETRY 30000
 #define SCREEN_DIM_MS      30000
 
-// ── Battery Saver Limits ───────────────────────────────────────
 #define BSAVE_MAX_POWER    20000    // W  (20 kW for HYD 20 KTL)
 
-// ── EEPROM layout (kept compatible with original Sofar2mqtt) ───
 #define EE_SIZE       512
 #define EE_MAGIC      0       //  1 byte  '1' = configured
 #define EE_NAME       1       // 64 bytes
@@ -116,4 +108,19 @@
 #define EE_PASS       167     // 32 bytes
 #define EE_PASS_LEN   32
 
-#endif // SOFAR_CONFIG_H
+struct HeapStats {
+    uint32_t freeHeap    = 0;
+    uint32_t maxBlock    = 0;
+    uint32_t minHeapSeen = UINT32_MAX;
+    uint8_t  frag        = 0;
+
+    void update() {
+        freeHeap = ESP.getFreeHeap();
+        maxBlock = ESP.getMaxFreeBlockSize();
+        frag     = ESP.getHeapFragmentation();
+        if (freeHeap < minHeapSeen) minHeapSeen = freeHeap;
+    }
+};
+extern HeapStats heapStats;
+
+#endif

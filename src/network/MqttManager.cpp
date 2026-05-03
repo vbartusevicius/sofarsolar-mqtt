@@ -82,64 +82,78 @@ void MqttManager::setAuto(int32_t limit) {
 }
 
 void MqttManager::begin() {
+    _wifiClient.setTimeout(5000);
+    _mqtt.setSocketTimeout(5);
     _mqtt.setBufferSize(2048);
     _ready = true;
-    appLog.add("MQTT", "begin, buf=2048");
+    appLog.add("MQTT", "begin buf=2048");
     connect();
 }
 
 void MqttManager::connect() {
     if (_mqtt.connected()) return;
 
-    String clientId  = String(_cfg.name()) + "-" + String(ESP.getChipId(), HEX);
-    String willTopic = String(_cfg.name()) + "/status";
     int port = atoi(_cfg.mqttPort());
 
-    appLog.add("MQTT", "Connecting to " + String(_cfg.mqttHost()) + ":" + String(port)
-               + " client=" + clientId);
+    char clientId[80];
+    snprintf(clientId, sizeof(clientId), "%s-%x", _cfg.name(), (unsigned)ESP.getChipId());
+    char willTopic[80];
+    snprintf(willTopic, sizeof(willTopic), "%s/status", _cfg.name());
+
+    char logBuf[192];
+    snprintf(logBuf, sizeof(logBuf), "Connecting to %s:%d client=%s",
+             _cfg.mqttHost(), port, clientId);
+    appLog.add("MQTT", logBuf);
 
     _mqtt.setServer(_cfg.mqttHost(), port);
     _mqtt.setCallback(callbackTrampoline);
 
-    if (_mqtt.connect(clientId.c_str(), _cfg.mqttUser(), _cfg.mqttPass(),
-                      willTopic.c_str(), 0, true, "offline"))
+    if (_mqtt.connect(clientId, _cfg.mqttUser(), _cfg.mqttPass(),
+                      willTopic, 0, true, "offline"))
     {
         appLog.add("MQTT", "Connected OK");
-        _mqtt.publish(willTopic.c_str(), "online", true);
-        String sub = String(_cfg.name()) + "/set/#";
-        _mqtt.subscribe(sub.c_str());
-        appLog.add("MQTT", "Subscribed: " + sub);
+        _mqtt.publish(willTopic, "online", true);
+        char sub[80];
+        snprintf(sub, sizeof(sub), "%s/set/#", _cfg.name());
+        _mqtt.subscribe(sub);
+        snprintf(logBuf, sizeof(logBuf), "Subscribed: %s", sub);
+        appLog.add("MQTT", logBuf);
         if (!_haDiscoverySent) {
             publishHADiscovery(_mqtt, _cfg.name());
             _haDiscoverySent = true;
             appLog.add("MQTT", "HA discovery sent");
         }
     } else {
-        appLog.add("MQTT", "Connect FAILED, rc=" + String(_mqtt.state()));
+        snprintf(logBuf, sizeof(logBuf), "Connect FAILED rc=%d", _mqtt.state());
+        appLog.add("MQTT", logBuf);
     }
 }
 
 void MqttManager::publish() {
     if (!_ready) return;
     if (!_mqtt.connected()) {
-        appLog.add("MQTT", "Pub skip: disconnected rc=" + String(_mqtt.state()));
+        char lb[48];
+        snprintf(lb, sizeof(lb), "Pub skip: disconnected rc=%d", _mqtt.state());
+        appLog.add("MQTT", lb);
         return;
     }
-    String json  = buildJSON();
-    String topic = String(_cfg.name()) + "/state";
-    bool ok = _mqtt.publish(topic.c_str(), json.c_str());
+    String json = buildJSON();
+    char topic[80];
+    snprintf(topic, sizeof(topic), "%s/state", _cfg.name());
+    bool ok = _mqtt.publish(topic, json.c_str());
+    char lb[48];
     if (ok) {
-        appLog.add("MQTT", "Pub OK len=" + String(json.length())
-                   + " heap=" + String(ESP.getFreeHeap())
-                   + " frag=" + String(ESP.getHeapFragmentation()) + "%");
+        snprintf(lb, sizeof(lb), "Pub OK len=%u", (unsigned)json.length());
     } else {
-        appLog.add("MQTT", "Pub FAIL len=" + String(json.length())
-                   + " rc=" + String(_mqtt.state()));
+        snprintf(lb, sizeof(lb), "Pub FAIL len=%u rc=%d",
+                 (unsigned)json.length(), _mqtt.state());
     }
+    appLog.add("MQTT", lb);
 }
 
 String MqttManager::buildJSON() {
     const InverterData& d = _inv.data();
+    char fb[16];
 
     JsonDocument doc;
     // System
@@ -147,30 +161,30 @@ String MqttManager::buildJSON() {
     doc["inverter_temp"]  = d.inverterTemp;
     doc["heatsink_temp"]  = d.heatsinkTemp;
     // Grid
-    doc["grid_freq"]      = serialized(String(d.gridFreq, 2));
+    doc["grid_freq"]      = serialized(dtostrf(d.gridFreq, 0, 2, fb));
     doc["inverter_power"] = d.inverterPower;
     doc["grid_power"]     = d.gridPower;
-    doc["grid_voltage"]   = serialized(String(d.gridVoltage, 1));
+    doc["grid_voltage"]   = serialized(dtostrf(d.gridVoltage, 0, 1, fb));
     doc["load_power"]     = d.loadPower;
     // PV
-    doc["pv1_voltage"]    = serialized(String(d.pv1Voltage, 1));
-    doc["pv1_current"]    = serialized(String(d.pv1Current, 2));
+    doc["pv1_voltage"]    = serialized(dtostrf(d.pv1Voltage, 0, 1, fb));
+    doc["pv1_current"]    = serialized(dtostrf(d.pv1Current, 0, 2, fb));
     doc["pv1_power"]      = d.pv1Power;
-    doc["pv2_voltage"]    = serialized(String(d.pv2Voltage, 1));
-    doc["pv2_current"]    = serialized(String(d.pv2Current, 2));
+    doc["pv2_voltage"]    = serialized(dtostrf(d.pv2Voltage, 0, 1, fb));
+    doc["pv2_current"]    = serialized(dtostrf(d.pv2Current, 0, 2, fb));
     doc["pv2_power"]      = d.pv2Power;
     doc["pv_total"]       = d.pvPower;
     // Battery 1
-    doc["batt_voltage"]   = serialized(String(d.battVoltage, 1));
-    doc["batt_current"]   = serialized(String(d.battCurrent, 2));
+    doc["batt_voltage"]   = serialized(dtostrf(d.battVoltage, 0, 1, fb));
+    doc["batt_current"]   = serialized(dtostrf(d.battCurrent, 0, 2, fb));
     doc["batt_power"]     = d.batteryPower;
     doc["batt_temp"]      = d.battTemp;
     doc["batt_soc"]       = d.batterySOC;
     doc["batt_soh"]       = d.battSOH;
     doc["batt_cycles"]    = d.battCycles;
     // Battery 2
-    doc["batt2_voltage"]  = serialized(String(d.batt2Voltage, 1));
-    doc["batt2_current"]  = serialized(String(d.batt2Current, 2));
+    doc["batt2_voltage"]  = serialized(dtostrf(d.batt2Voltage, 0, 1, fb));
+    doc["batt2_current"]  = serialized(dtostrf(d.batt2Current, 0, 2, fb));
     doc["batt2_power"]    = d.batt2Power;
     doc["batt2_temp"]     = d.batt2Temp;
     doc["batt2_soc"]      = d.batt2SOC;
@@ -181,18 +195,18 @@ String MqttManager::buildJSON() {
     doc["batt_avg_soc"]   = d.battAvgSOC;
     doc["batt_avg_soh"]   = d.battAvgSOH;
     // Energy
-    doc["today_gen"]      = serialized(String(d.todayGeneration, 2));
-    doc["total_gen"]      = serialized(String(d.totalGeneration, 1));
-    doc["today_use"]      = serialized(String(d.todayConsumption, 2));
-    doc["total_use"]      = serialized(String(d.totalConsumption, 1));
-    doc["today_imp"]      = serialized(String(d.todayImport, 2));
-    doc["total_imp"]      = serialized(String(d.totalImport, 1));
-    doc["today_exp"]      = serialized(String(d.todayExport, 2));
-    doc["total_exp"]      = serialized(String(d.totalExport, 1));
-    doc["today_chg"]      = serialized(String(d.todayCharged, 2));
-    doc["total_chg"]      = serialized(String(d.totalCharged, 1));
-    doc["today_dis"]      = serialized(String(d.todayDischarged, 2));
-    doc["total_dis"]      = serialized(String(d.totalDischarged, 1));
+    doc["today_gen"]      = serialized(dtostrf(d.todayGeneration, 0, 2, fb));
+    doc["total_gen"]      = serialized(dtostrf(d.totalGeneration, 0, 1, fb));
+    doc["today_use"]      = serialized(dtostrf(d.todayConsumption, 0, 2, fb));
+    doc["total_use"]      = serialized(dtostrf(d.totalConsumption, 0, 1, fb));
+    doc["today_imp"]      = serialized(dtostrf(d.todayImport, 0, 2, fb));
+    doc["total_imp"]      = serialized(dtostrf(d.totalImport, 0, 1, fb));
+    doc["today_exp"]      = serialized(dtostrf(d.todayExport, 0, 2, fb));
+    doc["total_exp"]      = serialized(dtostrf(d.totalExport, 0, 1, fb));
+    doc["today_chg"]      = serialized(dtostrf(d.todayCharged, 0, 2, fb));
+    doc["total_chg"]      = serialized(dtostrf(d.totalCharged, 0, 1, fb));
+    doc["today_dis"]      = serialized(dtostrf(d.todayDischarged, 0, 2, fb));
+    doc["total_dis"]      = serialized(dtostrf(d.totalDischarged, 0, 1, fb));
     // Mode & control
     doc["working_mode"]        = d.workingMode;
     doc["battery_save"]        = _bs.isActive();
@@ -207,12 +221,12 @@ String MqttManager::buildJSON() {
     doc["mqtt_ok"]       = _mqtt.connected();
     doc["wifi_ok"]       = WiFi.isConnected();
     doc["uptime"]        = millis();
-    doc["free_heap"]     = ESP.getFreeHeap();
-    doc["heap_frag"]     = ESP.getHeapFragmentation();
-    doc["max_free_block"]= ESP.getMaxFreeBlockSize();
+    doc["free_heap"]     = heapStats.freeHeap;
+    doc["heap_frag"]     = heapStats.frag;
+    doc["max_free_block"]= heapStats.maxBlock;
 
     String out;
-    out.reserve(1600);
+    out.reserve(measureJson(doc) + 1);
     serializeJson(doc, out);
     return out;
 }

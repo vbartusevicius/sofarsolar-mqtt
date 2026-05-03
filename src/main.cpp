@@ -15,7 +15,6 @@
 #include "network/MqttManager.h"
 #include "web/SofarWebServer.h"
 
-// ── Objects ─────────────────────────────────────────────────────
 static EEConfig       eeConfig;
 static Modbus         modbus;
 static Inverter       inverter(modbus);
@@ -24,9 +23,8 @@ static Display        display;
 static MqttManager    mqttMgr(eeConfig, inverter, bsave, modbus);
 static SofarWebServer webServer(eeConfig, inverter, bsave, mqttMgr);
 
-static uint32_t minHeapSeen = UINT32_MAX;
+HeapStats heapStats;
 
-// ── Arduino entry points ────────────────────────────────────────
 void setup() {
     eeConfig.begin();
     bool configLoaded = eeConfig.load();
@@ -34,11 +32,8 @@ void setup() {
     display.begin();
     modbus.begin(MODBUS_BAUD);
     delay(500);
-
-    // Try to read inverter serial number via Modbus
     inverter.readSerialNumber();
 
-    // If no saved config, use SN or ESP chip ID as default device name
     if (!configLoaded) {
         if (inverter.serialNumber()[0] != '\0') {
             snprintf(eeConfig.name(), EE_NAME_LEN, "sofar_%s", inverter.serialNumber());
@@ -55,12 +50,10 @@ void setup() {
     webServer.begin();
     MDNS.begin(eeConfig.name());
 
-    // Schedule periodic tasks via TaskManagerIO
     taskManager.scheduleFixedRate(INTERVAL_SENSORS,    []() { inverter.readSensors(); });
     taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() { bsave.update(); });
     taskManager.scheduleFixedRate(INTERVAL_MQTT_PUB,   []() { mqttMgr.publish(); });
     taskManager.scheduleFixedRate(INTERVAL_MQTT_RETRY, []() {
-        // Only start MQTT once Modbus is confirmed working
         if (inverter.hasError()) return;
         if (!mqttMgr.ready()) mqttMgr.begin();
         mqttMgr.connect();
@@ -69,14 +62,13 @@ void setup() {
         display.update(inverter.data(), bsave,
                        WiFi.isConnected(), !inverter.hasError(), mqttMgr.connected());
     });
+    taskManager.scheduleFixedRate(1000, []() { heapStats.update(); });
     taskManager.scheduleFixedRate(60000, []() {
-        uint32_t freeHeap = ESP.getFreeHeap();
-        uint32_t maxBlock = ESP.getMaxFreeBlockSize();
-        if (freeHeap < minHeapSeen) minHeapSeen = freeHeap;
-        appLog.add("SYS", "heap=" + String(freeHeap)
-                   + " blk=" + String(maxBlock)
-                   + " min=" + String(minHeapSeen)
-                   + " frag=" + String(ESP.getHeapFragmentation()) + "%");
+        char lb[80];
+        snprintf(lb, sizeof(lb), "heap=%u blk=%u min=%u frag=%u%%",
+                 (unsigned)heapStats.freeHeap, (unsigned)heapStats.maxBlock,
+                 (unsigned)heapStats.minHeapSeen, (unsigned)heapStats.frag);
+        appLog.add("SYS", lb);
     });
 }
 

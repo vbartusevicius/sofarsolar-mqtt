@@ -86,4 +86,4 @@ private:
     static uint32_t u32(const uint8_t* b, uint16_t reg, uint16_t base);
 };
 
-#endif // SOFAR_INVERTER_H
+#endif

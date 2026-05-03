@@ -12,7 +12,6 @@ public:
     void disable();
     void toggle();
 
-    // Call every loop iteration.  Internally rate-limited to INTERVAL_BSAVE.
     void update();
 
     bool    isActive()    const { return _active; }
@@ -25,4 +24,4 @@ private:
     unsigned long _lastRun = 0;
 };
 
-#endif // SOFAR_BATTERY_SAVER_H
+#endif

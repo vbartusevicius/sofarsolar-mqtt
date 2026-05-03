@@ -12,7 +12,7 @@ void AppLog::pushStr(const char* s) {
     while (*s) push(*s++);
 }
 
-void AppLog::add(const char* tag, const String& msg) {
+void AppLog::add(const char* tag, const char* msg) {
     // Timestamp
     char tmp[12];
     ultoa(millis() / 1000, tmp, 10);
@@ -20,8 +20,7 @@ void AppLog::add(const char* tag, const String& msg) {
     pushStr("s [");
     pushStr(tag);
     pushStr("] ");
-    // Message — iterate without creating a copy
-    for (unsigned int i = 0; i < msg.length(); i++) push(msg[i]);
+    pushStr(msg);
     push('\n');
 }
 

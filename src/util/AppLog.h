@@ -5,7 +5,8 @@
 
 class AppLog {
 public:
-    void add(const char* tag, const String& msg);
+    void add(const char* tag, const char* msg);
+    void add(const char* tag, const String& msg) { add(tag, msg.c_str()); }
 
     String text() const;
 

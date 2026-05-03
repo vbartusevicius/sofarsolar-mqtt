@@ -3,7 +3,6 @@
 #include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
 
-// ── Colour palette ─────────────────────────────────────────────
 #define CLR_BG       ILI9341_BLACK
 #define CLR_LABEL    0xBDF7            // light grey
 #define CLR_EXPORT   ILI9341_GREEN
@@ -16,7 +15,6 @@
 #define CLR_OFF      0x8410            // dim grey
 #define CLR_DIVIDER  0x4208
 
-// Layout constants (240 × 320 portrait)
 #define HDR_Y         0
 #define HDR_H        44
 #define ROW_START    52
@@ -44,44 +42,35 @@ void Display::begin() {
     _needFullDraw = true;
 }
 
-// ── Splash screen (shown during boot) ────────────────────────────
 void Display::showSplash(const char* line1, const char* line2) {
     _tft.fillScreen(CLR_BG);
     drawCentered(120, String(line1), 2, ILI9341_WHITE);
     drawCentered(150, String(line2), 2, CLR_PV);
 }
 
-// ── Static chrome (header bar, dividers, labels) ───────────────
 void Display::drawChrome() {
     _tft.fillScreen(CLR_BG);
 
-    // Header background
     _tft.fillRect(0, HDR_Y, 240, HDR_H, 0x0010);  // dark blue
     _tft.setTextSize(2);
     _tft.setTextColor(ILI9341_WHITE, 0x0010);
     _tft.setCursor(16, 14);
     _tft.print("BATTERY SAVER");
 
-    // Dividers
     _tft.drawFastHLine(0, HDR_H + 2, 240, CLR_DIVIDER);
     _tft.drawFastHLine(0, BTN_Y - 4, 240, CLR_DIVIDER);
     _tft.drawFastHLine(0, STATUS_Y - 2, 240, CLR_DIVIDER);
 }
 
-// ── Draw one metric row ────────────────────────────────────────
 void Display::drawRow(int16_t y, const char* label, int32_t value,
                       const char* unit, uint16_t color)
 {
-    // Clear row
     _tft.fillRect(0, y, 240, ROW_H - 2, CLR_BG);
-
-    // Label (left-aligned)
     _tft.setTextSize(2);
     _tft.setTextColor(CLR_LABEL, CLR_BG);
     _tft.setCursor(8, y + 6);
     _tft.print(label);
 
-    // Value (right-aligned)
     String val = String(value) + " " + unit;
     int16_t w = val.length() * 12;   // size-2 char = 12 px wide
     _tft.setTextColor(color, CLR_BG);
@@ -89,7 +78,6 @@ void Display::drawRow(int16_t y, const char* label, int32_t value,
     _tft.print(val);
 }
 
-// ── Centred text helper ────────────────────────────────────────
 void Display::drawCentered(int16_t y, const String& text, uint8_t size,
                            uint16_t fg)
 {
@@ -100,7 +88,6 @@ void Display::drawCentered(int16_t y, const String& text, uint8_t size,
     _tft.print(text);
 }
 
-// ── Main update ────────────────────────────────────────────────
 void Display::update(const InverterData& inv, const BatterySaver& bs,
                      bool wifiOk, bool modbusOk, bool mqttOk)
 {
@@ -113,7 +100,6 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
     if (_needFullDraw) {
         drawChrome();
         _needFullDraw = false;
-        // Force all rows to redraw
         _prevGrid = -99999; _prevBatt = -99999; _prevSOC = 9999;
         _prevPV   = -1;     _prevLoad = -99999; _prevTarget = -99999;
         _prevActive = !bs.isActive();
@@ -121,7 +107,6 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
 
     int16_t row = ROW_START;
 
-    // Grid
     if (inv.gridPower != _prevGrid) {
         uint16_t clr = inv.gridPower >= 0 ? CLR_EXPORT : CLR_IMPORT;
         drawRow(row, "Grid", inv.gridPower, "W", clr);
@@ -129,14 +114,12 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
     }
     row += ROW_H;
 
-    // PV
     if (inv.pvPower != _prevPV) {
         drawRow(row, "Solar", inv.pvPower, "W", CLR_PV);
         _prevPV = inv.pvPower;
     }
     row += ROW_H;
 
-    // Battery
     if (inv.batteryPower != _prevBatt) {
         uint16_t clr = inv.batteryPower >= 0 ? CLR_CHARGE : CLR_DISCHG;
         drawRow(row, "Batt", inv.batteryPower, "W", clr);
@@ -144,7 +127,6 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
     }
     row += ROW_H;
 
-    // SOC
     if (inv.batterySOC != _prevSOC) {
         uint16_t clr = inv.batterySOC > 20 ? CLR_CHARGE : CLR_IMPORT;
         drawRow(row, "SOC", inv.batterySOC, "%", clr);
@@ -152,13 +134,11 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
     }
     row += ROW_H;
 
-    // Load
     if (inv.loadPower != _prevLoad) {
         drawRow(row, "Load", inv.loadPower, "W", ILI9341_WHITE);
         _prevLoad = inv.loadPower;
     }
 
-    // Toggle button
     if (bs.isActive() != _prevActive || bs.targetPower() != _prevTarget) {
         drawButton(bs.isActive(), bs.targetPower());
         _prevActive = bs.isActive();
@@ -189,7 +169,6 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
     }
 }
 
-// ── Draw toggle button ────────────────────────────────────────
 void Display::drawButton(bool active, int32_t target) {
     uint16_t bg  = active ? 0x03E0 : 0x4000;   // dark green / dark red
     uint16_t fg  = active ? ILI9341_WHITE : 0xBDF7;
@@ -213,7 +192,6 @@ void Display::drawButton(bool active, int32_t target) {
     }
 }
 
-// ── Touch polling ──────────────────────────────────────────────
 bool Display::pollTouch() {
     if (!_ts.tirqTouched()) { _touchedPrev = false; return false; }
     if (!_ts.touched())     { _touchedPrev = false; return false; }
@@ -226,7 +204,6 @@ bool Display::pollTouch() {
     return true;                                // tap while awake = toggle
 }
 
-// ── Dimming ────────────────────────────────────────────────────
 void Display::wake() {
     _tft.begin();                // re-init SPI + ILI9341 command sequence
     _tft.setRotation(2);
@@ -239,7 +216,10 @@ void Display::wake() {
 void Display::handleDimming() {
     if (_brightness == 0) { _screenOn = false; return; }
     if ((millis() - _lastTouch) > SCREEN_DIM_MS) {
-        if (_brightness > 0) { _brightness--; analogWrite(PIN_TFT_LED, _brightness); delay(40); }
+        if (millis() - _lastDimStep < 40) return;   // rate-limit, no blocking
+        _lastDimStep = millis();
+        _brightness--;
+        analogWrite(PIN_TFT_LED, _brightness);
         if (_brightness == 0) _screenOn = false;
     }
 }

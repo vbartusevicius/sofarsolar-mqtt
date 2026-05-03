@@ -67,17 +67,21 @@ int Modbus::listen(uint8_t* frame, uint8_t& frameSize,
 
     frameSize = idx;
     if (frameSize < 5) {
-        appLog.add("MB", "Resp timeout, got " + String(frameSize) + "B");
+        char lb[40];
+        snprintf(lb, sizeof(lb), "Resp timeout got %uB", (unsigned)frameSize);
+        appLog.add("MB", lb);
         return -2;
     }
     if (!checkCRC(frame, frameSize)) {
-        appLog.add("MB", "Resp CRC fail, fc=0x" + String(fnCode, HEX)
-                   + " len=" + String(frameSize));
+        char lb[48];
+        snprintf(lb, sizeof(lb), "Resp CRC fail fc=0x%02X len=%u", fnCode, (unsigned)frameSize);
+        appLog.add("MB", lb);
         return -1;
     }
     if (fnCode & 0x80) {
-        appLog.add("MB", "Resp err fc=0x" + String(fnCode, HEX)
-                   + " code=" + String(frame[2]));
+        char lb[40];
+        snprintf(lb, sizeof(lb), "Resp err fc=0x%02X code=%u", fnCode, frame[2]);
+        appLog.add("MB", lb);
         return frame[2];
     }
 
@@ -111,8 +115,9 @@ bool Modbus::readHolding(uint8_t slaveId, uint16_t reg, uint8_t count,
     uint8_t respSize = 0;
     int rc = listen(resp, respSize, data, dataSize);
     if (rc != 0) {
-        appLog.add("MB", "RD 0x" + String(reg, HEX) + " x" + String(count)
-                   + " FAIL rc=" + String(rc));
+        char lb[48];
+        snprintf(lb, sizeof(lb), "RD 0x%04X x%u FAIL rc=%d", reg, count, rc);
+        appLog.add("MB", lb);
     }
     return rc == 0;
 }
@@ -145,8 +150,9 @@ bool Modbus::writeMultiple(uint8_t slaveId, uint16_t reg, uint8_t regCount,
     uint8_t respSize = 0, respDataSize = 0;
     int rc = listen(resp, respSize, respData, respDataSize);
     if (rc != 0) {
-        appLog.add("MB", "WR 0x" + String(reg, HEX) + " x" + String(regCount)
-                   + " FAIL rc=" + String(rc));
+        char lb[48];
+        snprintf(lb, sizeof(lb), "WR 0x%04X x%u FAIL rc=%d", reg, regCount, rc);
+        appLog.add("MB", lb);
     }
     return rc == 0;
 }
