@@ -6,6 +6,7 @@
 
 #include "Config.h"
 #include "config/EEConfig.h"
+#include "util/AppLog.h"
 #include "modbus/Modbus.h"
 #include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
@@ -22,6 +23,8 @@ static BatterySaver   bsave(inverter);
 static Display        display;
 static MqttManager    mqttMgr(eeConfig, inverter, bsave, modbus);
 static SofarWebServer webServer(eeConfig, inverter, bsave, mqttMgr);
+
+static uint32_t minHeapSeen = UINT32_MAX;
 
 // ── Arduino entry points ────────────────────────────────────────
 void setup() {
@@ -65,6 +68,15 @@ void setup() {
     taskManager.scheduleFixedRate(INTERVAL_DISPLAY,    []() {
         display.update(inverter.data(), bsave,
                        WiFi.isConnected(), !inverter.hasError(), mqttMgr.connected());
+    });
+    taskManager.scheduleFixedRate(60000, []() {
+        uint32_t freeHeap = ESP.getFreeHeap();
+        uint32_t maxBlock = ESP.getMaxFreeBlockSize();
+        if (freeHeap < minHeapSeen) minHeapSeen = freeHeap;
+        appLog.add("SYS", "heap=" + String(freeHeap)
+                   + " blk=" + String(maxBlock)
+                   + " min=" + String(minHeapSeen)
+                   + " frag=" + String(ESP.getHeapFragmentation()) + "%");
     });
 }
 

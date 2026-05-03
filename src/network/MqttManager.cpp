@@ -129,7 +129,9 @@ void MqttManager::publish() {
     String topic = String(_cfg.name()) + "/state";
     bool ok = _mqtt.publish(topic.c_str(), json.c_str());
     if (ok) {
-        appLog.add("MQTT", "Pub OK len=" + String(json.length()));
+        appLog.add("MQTT", "Pub OK len=" + String(json.length())
+                   + " heap=" + String(ESP.getFreeHeap())
+                   + " frag=" + String(ESP.getHeapFragmentation()) + "%");
     } else {
         appLog.add("MQTT", "Pub FAIL len=" + String(json.length())
                    + " rc=" + String(_mqtt.state()));
@@ -205,8 +207,12 @@ String MqttManager::buildJSON() {
     doc["mqtt_ok"]       = _mqtt.connected();
     doc["wifi_ok"]       = WiFi.isConnected();
     doc["uptime"]        = millis();
+    doc["free_heap"]     = ESP.getFreeHeap();
+    doc["heap_frag"]     = ESP.getHeapFragmentation();
+    doc["max_free_block"]= ESP.getMaxFreeBlockSize();
 
     String out;
+    out.reserve(1600);
     serializeJson(doc, out);
     return out;
 }

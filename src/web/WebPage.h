@@ -70,6 +70,9 @@ h2{font-size:1em;color:#94a3b8;border-bottom:1px solid #1e293b;padding:8px 0;mar
 <div class="fr"><button type="submit">Save &amp; Reboot</button></div>
 </form></div>
 
+<div class="section"><h2>System</h2>
+<div class="grid" id="sg"></div></div>
+
 <div class="section"><h2>System Log</h2>
 <div class="logbox" id="lb">Loading...</div></div>
 
@@ -107,6 +110,12 @@ document.getElementById("bst").textContent=bs?"Target: "+d.battery_save_target+"
 if(d.mode)document.getElementById("cm").value=d.mode;
 if(d.charge_power!==undefined)document.getElementById("cp").value=d.charge_power;
 if(d.auto_limit!==undefined)document.getElementById("al").value=d.auto_limit;
+var sh="";
+if(d.free_heap!==undefined)sh+='<div class="card"><div class="l">FREE HEAP</div><div class="v w">'+d.free_heap+'</div></div>';
+if(d.max_free_block!==undefined)sh+='<div class="card"><div class="l">MAX BLOCK</div><div class="v w">'+d.max_free_block+'</div></div>';
+if(d.heap_frag!==undefined)sh+='<div class="card"><div class="l">HEAP FRAG</div><div class="v '+(d.heap_frag>40?'r':'g')+'">'+d.heap_frag+'%</div></div>';
+if(d.uptime!==undefined){var ut=Math.floor(d.uptime/1000);var uh=Math.floor(ut/3600);var um=Math.floor((ut%3600)/60);sh+='<div class="card"><div class="l">UPTIME</div><div class="v w">'+uh+'h '+um+'m</div></div>';}
+document.getElementById("sg").innerHTML=sh;
 var h="";for(var k in M){if(k in d)h+=c(k,d[k],M);}
 document.getElementById("mg").innerHTML=h;
 var eh="";for(var k in E){if(k in d)eh+=c(k,d[k],E);}
