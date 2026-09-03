@@ -22,6 +22,7 @@ void AppLog::add(const char* tag, const char* msg) {
     pushStr("] ");
     pushStr(msg);
     push('\n');
+    _serial++;
 }
 
 String AppLog::text() const {

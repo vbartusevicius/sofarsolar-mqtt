@@ -7,27 +7,39 @@
 #include "Config.h"
 #include "config/EEConfig.h"
 #include "util/AppLog.h"
+#include "util/HeapStats.h"
 #include "modbus/Modbus.h"
 #include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
+#include "control/ModeController.h"
 #include "display/Display.h"
 #include "network/WiFiSetup.h"
 #include "network/MqttManager.h"
+#include "update/ReleaseUpdater.h"
 #include "web/SofarWebServer.h"
 
 static EEConfig       eeConfig;
 static Modbus         modbus;
 static Inverter       inverter(modbus);
 static BatterySaver   bsave(inverter);
+static ModeController control(inverter, bsave);
 static Display        display;
-static MqttManager    mqttMgr(eeConfig, inverter, bsave, modbus);
-static SofarWebServer webServer(eeConfig, inverter, bsave, mqttMgr);
+static MqttManager    mqttMgr(eeConfig, inverter, bsave, control);
+static ReleaseUpdater updater;
+static SofarWebServer webServer(eeConfig, inverter, bsave, mqttMgr, control, updater);
 
 HeapStats heapStats;
 
 void setup() {
     eeConfig.begin();
     bool configLoaded = eeConfig.load();
+
+    // Apply battery-saver tuning (values are clamped by the setters)
+    bsave.setMinDelta(eeConfig.bsaveDelta());
+    bsave.setMaxPower(eeConfig.bsaveMaxPower());
+    bsave.setIdleLapse(eeConfig.idleLapseMs());
+    inverter.setKeepaliveMs(eeConfig.keepaliveMs());
+    updater.setCheckIntervalS(eeConfig.otaCheckS());
 
     display.begin();
     modbus.begin(MODBUS_BAUD);
@@ -59,9 +71,10 @@ void setup() {
         mqttMgr.connect();
     });
     taskManager.scheduleFixedRate(INTERVAL_DISPLAY,    []() {
-        display.update(inverter.data(), bsave,
+        display.update(inverter.data(), bsave, control, inverter.serialNumber(),
                        WiFi.isConnected(), !inverter.hasError(), mqttMgr.connected());
     });
+    taskManager.scheduleFixedRate(60000, []() { updater.run(); });   // self-paced
     taskManager.scheduleFixedRate(1000, []() { heapStats.update(); });
     taskManager.scheduleFixedRate(60000, []() {
         char lb[80];
@@ -80,6 +93,6 @@ void loop() {
     webServer.handleClient();
     mqttMgr.loop();
 
-    if (display.pollTouch()) bsave.toggle();
+    if (display.pollTouch()) control.toggleBatterySaver();
     display.handleDimming();
 }

@@ -11,7 +11,8 @@
 
 #define MODBUS_SLAVE_ID   0x01
 #define MODBUS_BAUD       9600
-#define MODBUS_TIMEOUT_MS 400       // per-byte wait
+#define MODBUS_TIMEOUT_MS 400       // wait for first response byte
+#define MODBUS_INTERBYTE_MS 20      // gap timeout for bytes within a frame
 #define MODBUS_MAX_FRAME  128
 #define FC_READ_HOLDING   0x03
 #define FC_WRITE_MULTI    0x10
@@ -91,9 +92,22 @@
 #define INTERVAL_DISPLAY   1000
 #define INTERVAL_MQTT_PUB  10000
 #define INTERVAL_MQTT_RETRY 30000
+// End-to-end liveness: echo a sequence number through the broker; if
+// MQTT_ECHO_MISS_TOLERANCE consecutive pings never come back, the link is
+// declared stale and force-reconnected (covers half-open TCP behind
+// proxies, where PubSubClient still reports "connected").
+#define MQTT_ECHO_PING_MS       60000UL
+#define MQTT_ECHO_MISS_TOLERANCE 3
+#define OTA_CHECK_INTERVAL_S    600      // default release-check interval
 #define SCREEN_DIM_MS      30000
 
 #define BSAVE_MAX_POWER    20000    // W  (20 kW for HYD 20 KTL)
+#define BSAVE_MIN_DELTA    100      // W  hysteresis: ignore smaller target changes
+#define BSAVE_IDLE_LAPSE_MS 600000UL // stop writes after 10 min at 0 W (night)
+
+// Inverter flash protection: an identical passive-mode command is re-sent
+// at most this often (inverter reverts to standby ~60 s without a write).
+#define PASSIVE_KEEPALIVE_MS 45000UL
 
 #define EE_SIZE       512
 #define EE_MAGIC      0       //  1 byte  '1' = configured
@@ -107,20 +121,15 @@
 #define EE_USER_LEN   32
 #define EE_PASS       167     // 32 bytes
 #define EE_PASS_LEN   32
-
-struct HeapStats {
-    uint32_t freeHeap    = 0;
-    uint32_t maxBlock    = 0;
-    uint32_t minHeapSeen = UINT32_MAX;
-    uint8_t  frag        = 0;
-
-    void update() {
-        freeHeap = ESP.getFreeHeap();
-        maxBlock = ESP.getMaxFreeBlockSize();
-        frag     = ESP.getHeapFragmentation();
-        if (freeHeap < minHeapSeen) minHeapSeen = freeHeap;
-    }
-};
-extern HeapStats heapStats;
+// Legacy Sofar2mqtt layout fields, kept for settings compatibility with
+// the parent project; not read by this firmware.
+#define EE_INVERTER_MODEL 199 // 2 = HYDV2
+#define EE_TFT_MODEL      200 // 1 = TFT present
+// Battery-saver tuning (4 bytes each, little-endian int32)
+#define EE_BSAVE_DELTA    204
+#define EE_BSAVE_MAX      208
+#define EE_KEEPALIVE_MS   212
+#define EE_IDLE_LAPSE_MS  216
+#define EE_OTA_CHECK_S    220
 
 #endif

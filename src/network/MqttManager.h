@@ -3,48 +3,47 @@
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <ArduinoJson.h>
 #include <PubSubClient.h>
 
 class EEConfig;
 class Inverter;
 class BatterySaver;
-class Modbus;
+class ModeController;
 
 class MqttManager {
 public:
-    MqttManager(EEConfig& cfg, Inverter& inv, BatterySaver& bs, Modbus& mb);
+    MqttManager(EEConfig& cfg, Inverter& inv, BatterySaver& bs, ModeController& ctrl);
 
     void begin();
-    void loop()    { if (_ready) _mqtt.loop(); }
+    void loop();
     void connect();
     void publish();
 
     bool ready()     const { return _ready; }
     bool connected() { return _mqtt.connected(); }
 
-    void setMode(const String& mode);
-    void setCharge(int32_t watts);
-    void setAuto(int32_t limit);
-
-    const char* currentMode()  const { return _mode; }
-    int32_t chargePower()      const { return _chargePower; }
-    int32_t autoLimit()        const { return _autoLimit; }
-
     String buildJSON();
 
 private:
-    EEConfig&     _cfg;
-    Inverter&     _inv;
-    BatterySaver& _bs;
-    Modbus&       _mb;
+    EEConfig&       _cfg;
+    Inverter&       _inv;
+    BatterySaver&   _bs;
+    ModeController& _ctrl;
 
     WiFiClient    _wifiClient;
     PubSubClient  _mqtt;
-    bool          _ready           = false;
-    bool          _haDiscoverySent = false;
-    char          _mode[16]        = "auto";
-    int32_t       _chargePower     = 0;
-    int32_t       _autoLimit       = 16384;
+    bool          _ready = false;
+
+    // End-to-end liveness through the broker (self-echo ping)
+    unsigned long _lastPingAt = 0;
+    uint32_t      _pingSeq    = 0;
+    uint32_t      _echoSeq    = 0;
+
+    void fillState(JsonDocument& doc);
+    void checkLiveness();
+    void sendEchoPing();
+    void forceReconnect(const char* reason);
 
     static MqttManager* _instance;
     static void callbackTrampoline(char* topic, byte* payload, unsigned int len);

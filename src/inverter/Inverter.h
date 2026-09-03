@@ -1,6 +1,7 @@
 #ifndef SOFAR_INVERTER_H
 #define SOFAR_INVERTER_H
 
+#include "Config.h"
 #include "modbus/Modbus.h"
 
 struct InverterData {
@@ -68,6 +69,14 @@ public:
     bool readSensors();
     bool readSerialNumber();
     bool sendPassiveCommand(int32_t power);
+    bool sendPassiveRange(int32_t minPower, int32_t maxPower);
+
+    // How often an unchanged passive command is re-sent (inverter
+    // times out ~60 s without a write).  Clamped to [5 s, 55 s] —
+    // values outside that range either spam the inverter's flash or
+    // let passive mode lapse unintentionally.
+    void     setKeepaliveMs(uint32_t ms);
+    uint32_t keepaliveMs() const { return _keepaliveMs; }
 
     bool hasError() const              { return _error; }
     const InverterData& data() const   { return _data; }
@@ -78,6 +87,13 @@ private:
     InverterData  _data;
     bool          _error = true;
     char          _sn[17] = "";
+
+    // Passive-command write cache (limits inverter flash wear)
+    bool          _cmdCacheValid = false;
+    int32_t       _lastSentMin   = 0;
+    int32_t       _lastSentMax   = 0;
+    unsigned long _lastSentAt    = 0;
+    uint32_t      _keepaliveMs   = PASSIVE_KEEPALIVE_MS;
 
     bool readBlock(uint16_t start, uint8_t count, uint8_t* buf, uint8_t& sz);
 

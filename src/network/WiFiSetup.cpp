@@ -10,13 +10,18 @@ static WiFiManagerParameter* pUser;
 static WiFiManagerParameter* pPass;
 static EEConfig*             _cfg = nullptr;
 
+static void copyInto(char* dst, size_t len, const char* src) {
+    strncpy(dst, src, len - 1);
+    dst[len - 1] = '\0';
+}
+
 static void saveCallback() {
     if (!_cfg) return;
-    strcpy(_cfg->name(),     pName->getValue());
-    strcpy(_cfg->mqttHost(), pHost->getValue());
-    strcpy(_cfg->mqttPort(), pPort->getValue());
-    strcpy(_cfg->mqttUser(), pUser->getValue());
-    strcpy(_cfg->mqttPass(), pPass->getValue());
+    copyInto(_cfg->name(),     EE_NAME_LEN, pName->getValue());
+    copyInto(_cfg->mqttHost(), EE_HOST_LEN, pHost->getValue());
+    copyInto(_cfg->mqttPort(), EE_PORT_LEN, pPort->getValue());
+    copyInto(_cfg->mqttUser(), EE_USER_LEN, pUser->getValue());
+    copyInto(_cfg->mqttPass(), EE_PASS_LEN, pPass->getValue());
     _cfg->save();
 }
 
