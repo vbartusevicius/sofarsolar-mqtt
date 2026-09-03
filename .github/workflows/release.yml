@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Generate release version (YYYY.MM.DD.HHMM, UTC)
+        run: echo "VERSION=v$(date -u +'%Y.%m.%d.%H%M')" >> "$GITHUB_ENV"
+
+      - name: Stamp firmware version
+        run: sed -i 's/#define FW_VERSION ".*"/#define FW_VERSION "'"$VERSION"'"/' src/Version.h
+
+      - name: Build firmware
+        run: pio run -e esp8266
+
+      - name: Publish GitHub release with binaries
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.VERSION }}
+          name: ${{ env.VERSION }}
+          files: |
+            .pio/build/esp8266/firmware.bin
+          generate_release_notes: true

@@ -60,6 +60,15 @@ h2{font-size:1em;color:#94a3b8;border-bottom:1px solid #1e293b;padding:8px 0;mar
 <div class="fr"><label>Auto Limit W</label><input id="al" type="number" min="100" max="20000" step="100" value="16384"><button onclick="sa()">Set</button></div>
 </div></div>
 
+<div class="section"><h2>Battery Saver Tuning</h2>
+<div class="ctrl">
+<div class="fr"><label>Drift W</label><input id="td" type="number" min="20" max="2000" step="10" value="100"></div>
+<div class="fr"><label>Max Power W</label><input id="tm" type="number" min="0" max="20000" step="100" value="20000"></div>
+<div class="fr"><label>Keep-alive s</label><input id="tk" type="number" min="5" max="55" step="1" value="45"></div>
+<div class="fr"><label>Idle Lapse min</label><input id="tl" type="number" min="1" max="60" step="1" value="10"></div>
+<div class="fr"><button onclick="st()">Apply &amp; Save</button></div>
+</div></div>
+
 <div class="section"><h2>MQTT Settings</h2>
 <form id="sf" onsubmit="return ss()">
 <div class="fr"><label>Host</label><input id="sh" name="mqtthost"></div>
@@ -69,6 +78,12 @@ h2{font-size:1em;color:#94a3b8;border-bottom:1px solid #1e293b;padding:8px 0;mar
 <div class="fr"><label>Device Name</label><input id="sd" name="deviceName"></div>
 <div class="fr"><button type="submit">Save &amp; Reboot</button></div>
 </form></div>
+
+<div class="section"><h2>Firmware Update</h2>
+<div class="ctrl">
+<div class="fr"><label>Version</label><input id="fvw" readonly style="border:none"><button onclick="cu()">Check for Updates</button></div>
+<div class="fr"><label>Check every min</label><input id="fu" type="number" min="1" max="1440" step="1" value="10"><button onclick="su_()">Apply</button></div>
+</div></div>
 
 <div class="section"><h2>System</h2>
 <div class="grid" id="sg"></div></div>
@@ -126,6 +141,18 @@ function tb(){fetch("/api/battery_save").then(function(){u()});}
 function sm(v){fetch("/api/mode?v="+v).then(function(){u()});}
 function sc(){fetch("/api/charge?v="+document.getElementById("cp").value).then(function(){u()});}
 function sa(){fetch("/api/auto?v="+document.getElementById("al").value).then(function(){u()});}
+function st(){var p="delta="+document.getElementById("td").value
++"&maxpower="+document.getElementById("tm").value
++"&keepalive="+document.getElementById("tk").value
++"&lapse="+document.getElementById("tl").value;
+fetch("/api/tuning?"+p).then(function(){alert("Tuning applied & saved.");});}
+function cu(){fetch("/api/update?check=1").then(function(r){return r.json()}).then(function(d){
+if(d.updating)alert("Updating to "+d.tag+" — the device will reboot. Reload the page in a minute.");
+else alert("No update started. Current: "+d.current+"\n(see System Log for details)");});}
+function su_(){fetch("/api/update?interval="+document.getElementById("fu").value)
+.then(function(r){return r.json()}).then(function(d){
+document.getElementById("fu").value=d.interval_min;
+alert("Check interval saved: "+d.interval_min+" min");});}
 function ss(){
 var f=document.getElementById("sf");
 var p=new URLSearchParams(new FormData(f)).toString();
@@ -141,6 +168,12 @@ document.getElementById("sp").value=d.mqttport||"";
 document.getElementById("su").value=d.mqttuser||"";
 document.getElementById("sw").value=d.mqttpass||"";
 document.getElementById("sd").value=d.deviceName||"";
+if(d.bsDelta!==undefined)document.getElementById("td").value=d.bsDelta;
+if(d.bsMaxPower!==undefined)document.getElementById("tm").value=d.bsMaxPower;
+if(d.keepaliveS!==undefined)document.getElementById("tk").value=d.keepaliveS;
+if(d.idleLapseMin!==undefined)document.getElementById("tl").value=d.idleLapseMin;
+if(d.firmware!==undefined)document.getElementById("fvw").value=d.firmware;
+if(d.otaCheckMin!==undefined)document.getElementById("fu").value=d.otaCheckMin;
 });
 </script></body></html>)rawliteral";
 

@@ -1,8 +1,8 @@
 #ifndef SOFAR_BATTERY_SAVER_H
 #define SOFAR_BATTERY_SAVER_H
 
-#include "inverter/Inverter.h"
 #include "Config.h"
+#include "inverter/Inverter.h"
 
 class BatterySaver {
 public:
@@ -17,11 +17,26 @@ public:
     bool    isActive()    const { return _active; }
     int32_t targetPower() const { return _targetPower; }
 
+    // Runtime-tunable parameters (persisted via EEConfig).
+    // Setters clamp to safe ranges.
+    void     setMinDelta(int32_t w);
+    void     setMaxPower(int32_t w);
+    void     setIdleLapse(uint32_t ms);
+    int32_t  minDelta()    const { return _minDelta; }
+    int32_t  maxPower()    const { return _maxPower; }
+    uint32_t idleLapseMs() const { return _idleLapseMs; }
+
 private:
     Inverter& _inv;
-    bool      _active      = false;
-    int32_t   _targetPower = 0;
-    unsigned long _lastRun = 0;
+    bool      _active         = false;
+    int32_t   _targetPower    = 0;
+    int32_t   _lastSentTarget = -1;
+    unsigned long _lastSentAt = 0;
+    unsigned long _zeroStart  = 0;
+
+    int32_t  _minDelta    = BSAVE_MIN_DELTA;
+    int32_t  _maxPower    = BSAVE_MAX_POWER;
+    uint32_t _idleLapseMs = BSAVE_IDLE_LAPSE_MS;
 };
 
 #endif

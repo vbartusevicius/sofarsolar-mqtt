@@ -12,7 +12,10 @@ struct HaSensor {
 
 #define S(i, n, u, dc, sc) { i, n, u, dc, sc }
 
-static const HaSensor SENSORS[] PROGMEM = {
+// Kept in RAM: this struct is read field-by-field, which requires 32-bit
+// aligned memcpy_P access if placed in PROGMEM — plain const is safer and
+// costs <1 KB of RAM.
+static const HaSensor SENSORS[] = {
     // System
     S("run_state",       "Run State",            "",    nullptr,       "measurement"),
     S("inverter_temp",   "Inverter Temperature", "°C",  "temperature", "measurement"),

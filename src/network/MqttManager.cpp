@@ -1,18 +1,19 @@
 #include "network/MqttManager.h"
 #include <ArduinoJson.h>
-#include "Config.h"
+#include "util/HeapStats.h"
 #include "config/EEConfig.h"
 #include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
-#include "modbus/Modbus.h"
+#include "control/ModeController.h"
 #include "ha/Discovery.h"
 #include "util/AppLog.h"
+#include "Version.h"
 
 MqttManager* MqttManager::_instance = nullptr;
 
 MqttManager::MqttManager(EEConfig& cfg, Inverter& inv,
-                         BatterySaver& bs, Modbus& mb)
-    : _cfg(cfg), _inv(inv), _bs(bs), _mb(mb), _mqtt(_wifiClient)
+                         BatterySaver& bs, ModeController& ctrl)
+    : _cfg(cfg), _inv(inv), _bs(bs), _ctrl(ctrl), _mqtt(_wifiClient)
 {
     _instance = this;
 }
@@ -28,57 +29,20 @@ void MqttManager::callbackTrampoline(char* topic, byte* payload,
 }
 
 void MqttManager::handleMessage(const String& topic, const String& msg) {
+    if (topic.endsWith("/ping")) {
+        // Echo came back — the link is alive end-to-end
+        uint32_t seq = (uint32_t)msg.toInt();
+        if ((uint32_t)(seq - _echoSeq) < 0x80000000UL) _echoSeq = seq;
+        return;
+    }
     if (topic.endsWith("/set/battery_save")) {
-        if (msg == "on" || msg == "true" || msg == "1")  setMode("battery_saver");
-        else if (_bs.isActive())                          setMode("auto");
+        if (msg == "on" || msg == "true" || msg == "1")  _ctrl.setMode("battery_saver");
+        else if (_bs.isActive())                          _ctrl.setMode("auto");
     }
-    else if (topic.endsWith("/set/charge"))  { setCharge(msg.toInt()); }
-    else if (topic.endsWith("/set/standby")) { setMode("standby"); }
-    else if (topic.endsWith("/set/auto"))    { setAuto(msg.toInt()); }
-    else if (topic.endsWith("/set/mode"))    { setMode(msg); }
-}
-
-void MqttManager::setMode(const String& mode) {
-    if (mode == "battery_saver") {
-        _bs.enable();
-        strncpy(_mode, "battery_saver", sizeof(_mode));
-    }
-    else if (mode == "standby") {
-        _bs.disable();
-        _inv.sendPassiveCommand(0);
-        strncpy(_mode, "standby", sizeof(_mode));
-    }
-    else if (mode == "charge") {
-        _bs.disable();
-        _inv.sendPassiveCommand(_chargePower);
-        strncpy(_mode, "charge", sizeof(_mode));
-    }
-    else { // "auto" or default
-        _bs.disable();
-        setAuto(_autoLimit);
-    }
-}
-
-void MqttManager::setCharge(int32_t watts) {
-    _bs.disable();
-    _chargePower = watts;
-    _inv.sendPassiveCommand(watts);
-    strncpy(_mode, "charge", sizeof(_mode));
-}
-
-void MqttManager::setAuto(int32_t limit) {
-    _bs.disable();
-    if (limit <= 0) limit = 16384;
-    _autoLimit = limit;
-    uint8_t pl[12] = {
-        0, 0, 0, 0,
-        (uint8_t)(((-limit) >> 24) & 0xFF), (uint8_t)(((-limit) >> 16) & 0xFF),
-        (uint8_t)(((-limit) >>  8) & 0xFF), (uint8_t)((-limit) & 0xFF),
-        (uint8_t)((limit >> 24) & 0xFF), (uint8_t)((limit >> 16) & 0xFF),
-        (uint8_t)((limit >>  8) & 0xFF), (uint8_t)(limit & 0xFF),
-    };
-    _mb.writeMultiple(MODBUS_SLAVE_ID, REG_PASSIVE_CTRL, 6, pl, 12);
-    strncpy(_mode, "auto", sizeof(_mode));
+    else if (topic.endsWith("/set/charge"))  { _ctrl.setCharge(msg.toInt()); }
+    else if (topic.endsWith("/set/standby")) { _ctrl.setMode("standby"); }
+    else if (topic.endsWith("/set/auto"))    { _ctrl.setAuto(msg.toInt()); }
+    else if (topic.endsWith("/set/mode"))    { _ctrl.setMode(msg.c_str()); }
 }
 
 void MqttManager::begin() {
@@ -116,17 +80,64 @@ void MqttManager::connect() {
         char sub[80];
         snprintf(sub, sizeof(sub), "%s/set/#", _cfg.name());
         _mqtt.subscribe(sub);
-        snprintf(logBuf, sizeof(logBuf), "Subscribed: %s", sub);
-        appLog.add("MQTT", logBuf);
-        if (!_haDiscoverySent) {
-            publishHADiscovery(_mqtt, _cfg.name());
-            _haDiscoverySent = true;
-            appLog.add("MQTT", "HA discovery sent");
-        }
+        snprintf(sub, sizeof(sub), "%s/ping", _cfg.name());
+        _mqtt.subscribe(sub);
+        appLog.add("MQTT", "Subscribed");
+        // Reset liveness counters for the fresh session
+        _pingSeq = _echoSeq = 0;
+        _lastPingAt = millis();
+        // Always re-publish discovery: a broker restart (e.g. Docker without
+        // a persistence volume) loses the retained configs otherwise.
+        publishHADiscovery(_mqtt, _cfg.name());
+        appLog.add("MQTT", "HA discovery sent");
     } else {
         snprintf(logBuf, sizeof(logBuf), "Connect FAILED rc=%d", _mqtt.state());
         appLog.add("MQTT", logBuf);
     }
+}
+
+// ── Liveness: self-echo ping through the broker ────────────────
+// PubSubClient only inspects the socket; behind a TCP proxy (e.g. Traefik
+// in front of Mosquitto) the socket can stay open while the MQTT session
+// is dead — bytes vanish into the proxy and connected() stays true.
+// A periodic echo through the real path proves the link end-to-end.
+void MqttManager::sendEchoPing() {
+    _pingSeq++;
+    char topic[80], payload[12];
+    snprintf(topic, sizeof(topic), "%s/ping", _cfg.name());
+    snprintf(payload, sizeof(payload), "%u", (unsigned)_pingSeq);
+    bool ok = _mqtt.publish(topic, payload);
+    char lb[48];
+    snprintf(lb, sizeof(lb), "Echo ping #%u %s (echo at #%u)",
+             (unsigned)_pingSeq, ok ? "sent" : "FAILED", (unsigned)_echoSeq);
+    appLog.add("MQTT", lb);
+}
+
+void MqttManager::checkLiveness() {
+    unsigned long now = millis();
+    if (now - _lastPingAt < MQTT_ECHO_PING_MS) return;
+    _lastPingAt = now;
+
+    if (_pingSeq > 0 &&
+        (uint32_t)(_pingSeq - _echoSeq) >= MQTT_ECHO_MISS_TOLERANCE) {
+        forceReconnect("stale link (no echo)");
+        return;
+    }
+    sendEchoPing();
+}
+
+void MqttManager::forceReconnect(const char* reason) {
+    char lb[80];
+    snprintf(lb, sizeof(lb), "Forcing reconnect: %s rc=%d", reason, _mqtt.state());
+    appLog.add("MQTT", lb);
+    _mqtt.disconnect();          // drops the socket; retry task reconnects
+    _pingSeq = _echoSeq = 0;
+}
+
+void MqttManager::loop() {
+    if (!_ready) return;
+    _mqtt.loop();                // cleans up state if the socket died
+    if (_mqtt.connected()) checkLiveness();
 }
 
 void MqttManager::publish() {
@@ -137,25 +148,38 @@ void MqttManager::publish() {
         appLog.add("MQTT", lb);
         return;
     }
-    String json = buildJSON();
+    JsonDocument doc;
+    fillState(doc);
     char topic[80];
     snprintf(topic, sizeof(topic), "%s/state", _cfg.name());
-    bool ok = _mqtt.publish(topic, json.c_str());
-    char lb[48];
+
+    // Stream straight to the socket — no intermediate String on the heap
+    size_t len = measureJson(doc);
+    bool ok = _mqtt.beginPublish(topic, len, false);
     if (ok) {
-        snprintf(lb, sizeof(lb), "Pub OK len=%u", (unsigned)json.length());
-    } else {
-        snprintf(lb, sizeof(lb), "Pub FAIL len=%u rc=%d",
-                 (unsigned)json.length(), _mqtt.state());
+        serializeJson(doc, _mqtt);
+        ok = _mqtt.endPublish();
     }
+
+    char lb[48];
+    snprintf(lb, sizeof(lb), "Pub %s len=%u%s", ok ? "OK" : "FAIL",
+             (unsigned)len, ok ? "" : " (socket)");
     appLog.add("MQTT", lb);
 }
 
 String MqttManager::buildJSON() {
+    JsonDocument doc;
+    fillState(doc);
+    String out;
+    out.reserve(measureJson(doc) + 1);
+    serializeJson(doc, out);
+    return out;
+}
+
+void MqttManager::fillState(JsonDocument& doc) {
     const InverterData& d = _inv.data();
     char fb[16];
 
-    JsonDocument doc;
     // System
     doc["run_state"]      = d.runState;
     doc["inverter_temp"]  = d.inverterTemp;
@@ -212,11 +236,12 @@ String MqttManager::buildJSON() {
     doc["battery_save"]        = _bs.isActive();
     doc["battery_save_target"] = _bs.targetPower();
     // Control state
-    doc["mode"]          = _mode;
-    doc["charge_power"]  = _chargePower;
-    doc["auto_limit"]    = _autoLimit;
+    doc["mode"]          = _ctrl.currentMode();
+    doc["charge_power"]  = _ctrl.chargePower();
+    doc["auto_limit"]    = _ctrl.autoLimit();
     // Status
     doc["serial_number"] = _inv.serialNumber();
+    doc["firmware"]      = FW_VERSION;
     doc["modbus_ok"]     = !_inv.hasError();
     doc["mqtt_ok"]       = _mqtt.connected();
     doc["wifi_ok"]       = WiFi.isConnected();
@@ -224,9 +249,4 @@ String MqttManager::buildJSON() {
     doc["free_heap"]     = heapStats.freeHeap;
     doc["heap_frag"]     = heapStats.frag;
     doc["max_free_block"]= heapStats.maxBlock;
-
-    String out;
-    out.reserve(measureJson(doc) + 1);
-    serializeJson(doc, out);
-    return out;
 }

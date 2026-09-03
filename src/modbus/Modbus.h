@@ -22,10 +22,10 @@ private:
     static constexpr uint8_t MAX_RESP = MODBUS_MAX_FRAME;
 
     void flush();
-    int  listen(uint8_t* frame, uint8_t& frameSize,
+    int  listen(uint8_t slaveId, uint8_t* frame, uint8_t& frameSize,
                 uint8_t* data, uint8_t& dataSize);
     void calcCRC(uint8_t* frame, uint8_t len);
-    bool checkCRC(uint8_t* frame, uint8_t len);
+    bool checkCRC(const uint8_t* frame, uint8_t len) const;
 };
 
 #endif

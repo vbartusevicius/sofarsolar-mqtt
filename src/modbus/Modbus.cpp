@@ -1,4 +1,5 @@
 #include "Modbus.h"
+#include "Crc16.h"
 #include "util/AppLog.h"
 
 void Modbus::begin(unsigned long baud) {
@@ -7,23 +8,15 @@ void Modbus::begin(unsigned long baud) {
 
 // ── CRC-16 / Modbus ────────────────────────────────────────────
 void Modbus::calcCRC(uint8_t* frame, uint8_t len) {
-    uint16_t crc = 0xFFFF;
-    for (uint8_t i = 0; i < len - 2; i++) {
-        crc ^= frame[i];
-        for (uint8_t j = 0; j < 8; j++) {
-            if (crc & 1) { crc >>= 1; crc ^= 0xA001; }
-            else          { crc >>= 1; }
-        }
-    }
+    uint16_t crc = modbusCrc16(frame, len - 2);
     frame[len - 2] = crc & 0xFF;
     frame[len - 1] = crc >> 8;
 }
 
-bool Modbus::checkCRC(uint8_t* frame, uint8_t len) {
-    uint16_t received = (frame[len - 2] << 8) | frame[len - 1];
-    calcCRC(frame, len);
-    uint16_t computed = (frame[len - 2] << 8) | frame[len - 1];
-    return received == computed;
+bool Modbus::checkCRC(const uint8_t* frame, uint8_t len) const {
+    // Modbus CRC is little-endian: low byte first
+    uint16_t received = frame[len - 2] | ((uint16_t)frame[len - 1] << 8);
+    return received == modbusCrc16(frame, len - 2);
 }
 
 // ── Flush serial buffers ───────────────────────────────────────
@@ -34,7 +27,10 @@ void Modbus::flush() {
 }
 
 // ── Listen for a response frame ────────────────────────────────
-int Modbus::listen(uint8_t* frame, uint8_t& frameSize,
+// The first byte may take up to MODBUS_TIMEOUT_MS to arrive;
+// subsequent bytes within the frame must follow within
+// MODBUS_INTERBYTE_MS, so a dead link can only block one transfer.
+int Modbus::listen(uint8_t slaveId, uint8_t* frame, uint8_t& frameSize,
                    uint8_t* data, uint8_t& dataSize)
 {
     uint8_t idx = 0, fnCode = 0, expected = 0;
@@ -42,13 +38,14 @@ int Modbus::listen(uint8_t* frame, uint8_t& frameSize,
     frameSize = 0;
 
     while (idx < MAX_RESP) {
-        int tries = 0;
-        while (!Serial.available() && tries++ < 40) delay(10);
-        if (tries >= 40) break;
+        unsigned long limit = (idx == 0) ? MODBUS_TIMEOUT_MS : MODBUS_INTERBYTE_MS;
+        unsigned long start = millis();
+        while (!Serial.available() && (millis() - start) < limit) delay(1);
+        if (!Serial.available()) break;
 
         frame[idx] = Serial.read();
 
-        if (idx == 0 && frame[0] != MODBUS_SLAVE_ID) continue;
+        if (idx == 0 && frame[0] != slaveId) continue;
 
         if (idx == 1) {
             fnCode = frame[1];
@@ -113,7 +110,7 @@ bool Modbus::readHolding(uint8_t slaveId, uint16_t reg, uint8_t count,
 
     uint8_t resp[MAX_RESP];
     uint8_t respSize = 0;
-    int rc = listen(resp, respSize, data, dataSize);
+    int rc = listen(slaveId, resp, respSize, data, dataSize);
     if (rc != 0) {
         char lb[48];
         snprintf(lb, sizeof(lb), "RD 0x%04X x%u FAIL rc=%d", reg, count, rc);
@@ -148,7 +145,7 @@ bool Modbus::writeMultiple(uint8_t slaveId, uint16_t reg, uint8_t regCount,
 
     uint8_t resp[MAX_RESP], respData[MAX_RESP];
     uint8_t respSize = 0, respDataSize = 0;
-    int rc = listen(resp, respSize, respData, respDataSize);
+    int rc = listen(slaveId, resp, respSize, respData, respDataSize);
     if (rc != 0) {
         char lb[48];
         snprintf(lb, sizeof(lb), "WR 0x%04X x%u FAIL rc=%d", reg, regCount, rc);
