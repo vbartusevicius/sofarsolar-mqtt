@@ -56,7 +56,6 @@ bool EEConfig::load() {
     if ((v = readEE32(EE_BSAVE_MAX))     != -1) _bsaveMax    = v;
     if ((v = readEE32(EE_KEEPALIVE_MS))  != -1) _keepaliveMs = v;
     if ((v = readEE32(EE_IDLE_LAPSE_MS)) != -1) _idleLapseMs = v;
-    if ((v = readEE32(EE_OTA_CHECK_S))   != -1) _otaCheckS   = v;
     WiFi.hostname(_name);
     return true;
 }
@@ -75,6 +74,5 @@ void EEConfig::save() {
     changed |= writeEE32(EE_BSAVE_MAX,     _bsaveMax);
     changed |= writeEE32(EE_KEEPALIVE_MS,  _keepaliveMs);
     changed |= writeEE32(EE_IDLE_LAPSE_MS, _idleLapseMs);
-    changed |= writeEE32(EE_OTA_CHECK_S,   _otaCheckS);
     if (changed) EEPROM.commit();   // commit rewrites a whole flash sector
 }

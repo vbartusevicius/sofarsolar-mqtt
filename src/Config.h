@@ -94,7 +94,6 @@
 #define INTERVAL_MQTT_RETRY 30000
 #define MQTT_ECHO_PING_MS       60000UL  // this many missed broker echoes → force reconnect
 #define MQTT_ECHO_MISS_TOLERANCE 3
-#define OTA_CHECK_INTERVAL_S    600      // default release-check interval
 #define SCREEN_DIM_MS      30000
 
 #define BSAVE_MAX_POWER    20000    // W  (20 kW for HYD 20 KTL)
@@ -122,6 +121,5 @@
 #define EE_BSAVE_MAX      208
 #define EE_KEEPALIVE_MS   212
 #define EE_IDLE_LAPSE_MS  216
-#define EE_OTA_CHECK_S    220
 
 #endif

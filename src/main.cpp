@@ -15,7 +15,6 @@
 #include "display/Display.h"
 #include "network/WiFiSetup.h"
 #include "network/MqttManager.h"
-#include "update/ReleaseUpdater.h"
 #include "web/SofarWebServer.h"
 
 static EEConfig       eeConfig;
@@ -25,16 +24,11 @@ static BatterySaver   bsave(inverter);
 static ModeController control(inverter, bsave);
 static Display        display;
 static MqttManager    mqttMgr(eeConfig, inverter, bsave, control);
-static ReleaseUpdater updater;
-static SofarWebServer webServer(eeConfig, inverter, bsave, mqttMgr, control, updater);
+static SofarWebServer webServer(eeConfig, inverter, bsave, mqttMgr, control);
 
 HeapStats heapStats;
 
 void setup() {
-    // Before anything else allocates: install a release parked by a
-    // previous run (a TLS download needs ~22 KB contiguous heap).
-    updater.flashPendingAtBoot();
-
     eeConfig.begin();
     bool configLoaded = eeConfig.load();
 
@@ -42,7 +36,6 @@ void setup() {
     bsave.setMaxPower(eeConfig.bsaveMaxPower());
     bsave.setIdleLapse(eeConfig.idleLapseMs());
     inverter.setKeepaliveMs(eeConfig.keepaliveMs());
-    updater.setCheckIntervalS(eeConfig.otaCheckS());
 
     display.begin();
     modbus.begin(MODBUS_BAUD);
@@ -64,7 +57,6 @@ void setup() {
     ArduinoOTA.begin();
     webServer.begin();
     MDNS.begin(eeConfig.name());
-    updater.logLastAttempt();
 
     taskManager.scheduleFixedRate(INTERVAL_SENSORS,    []() { inverter.readSensors(); });
     taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() { bsave.update(); });
@@ -78,7 +70,6 @@ void setup() {
         display.update(inverter.data(), bsave, control, inverter.serialNumber(),
                        WiFi.isConnected(), !inverter.hasError(), mqttMgr.connected());
     });
-    taskManager.scheduleFixedRate(60000, []() { updater.run(); });
     taskManager.scheduleFixedRate(1000, []() { heapStats.update(); });
     taskManager.scheduleFixedRate(60000, []() {
         char lb[80];

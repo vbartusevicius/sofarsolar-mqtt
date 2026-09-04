@@ -26,12 +26,10 @@ public:
     int32_t  bsaveMaxPower() const { return _bsaveMax; }
     uint32_t keepaliveMs()   const { return (uint32_t)_keepaliveMs; }
     uint32_t idleLapseMs()   const { return (uint32_t)_idleLapseMs; }
-    uint32_t otaCheckS()     const { return (uint32_t)_otaCheckS; }
     void setBsaveDelta(int32_t w)   { _bsaveDelta  = w; }
     void setBsaveMaxPower(int32_t w){ _bsaveMax    = w; }
     void setKeepaliveMs(uint32_t ms){ _keepaliveMs = (int32_t)ms; }
     void setIdleLapseMs(uint32_t ms){ _idleLapseMs = (int32_t)ms; }
-    void setOtaCheckS(uint32_t s)   { _otaCheckS   = (int32_t)s; }
 
 private:
     char _name[EE_NAME_LEN] = "Sofar";
@@ -44,7 +42,6 @@ private:
     int32_t _bsaveMax    = BSAVE_MAX_POWER;
     int32_t _keepaliveMs = PASSIVE_KEEPALIVE_MS;
     int32_t _idleLapseMs = BSAVE_IDLE_LAPSE_MS;
-    int32_t _otaCheckS   = OTA_CHECK_INTERVAL_S;
 
     static void    readEE(int off, int len, char* dst);
     static bool    writeEE(int off, int len, const char* v);

@@ -1,21 +1,21 @@
 #include "web/SofarWebServer.h"
 #include <ArduinoJson.h>
+#include <Updater.h>
+#include <WiFiUdp.h>
 #include "Config.h"
 #include "config/EEConfig.h"
 #include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
 #include "network/MqttManager.h"
 #include "control/ModeController.h"
-#include "update/ReleaseUpdater.h"
 #include "web/WebPage.h"
 #include "util/AppLog.h"
 #include "Version.h"
 
 SofarWebServer::SofarWebServer(EEConfig& cfg, Inverter& inv,
                                BatterySaver& bs, MqttManager& mqtt,
-                               ModeController& ctrl, ReleaseUpdater& updater)
-    : _server(80), _cfg(cfg), _inv(inv), _bs(bs), _mqtt(mqtt), _ctrl(ctrl),
-      _updater(updater)
+                               ModeController& ctrl)
+    : _server(80), _cfg(cfg), _inv(inv), _bs(bs), _mqtt(mqtt), _ctrl(ctrl)
 {}
 
 void SofarWebServer::begin() {
@@ -40,7 +40,6 @@ void SofarWebServer::begin() {
         doc["bsMaxPower"]    = _bs.maxPower();
         doc["keepaliveS"]    = _inv.keepaliveMs() / 1000;
         doc["idleLapseMin"]  = _bs.idleLapseMs() / 60000;
-        doc["otaCheckMin"]   = _updater.checkIntervalS() / 60;
         String out;
         serializeJson(doc, out);
         _server.send(200, "application/json", out);
@@ -120,31 +119,64 @@ void SofarWebServer::begin() {
         _server.send(200, "text/plain", appLog.text());
     });
 
-    // Interval setting is answered normally; a check that finds a release
-    // reboots the device to install it, so that response never arrives.
-    _server.on("/api/update", [this]() {
-        if (_server.hasArg("interval")) {   // minutes
-            _updater.setCheckIntervalS(_server.arg("interval").toInt() * 60UL);
-            _cfg.setOtaCheckS(_updater.checkIntervalS());
-            _cfg.save();
-            JsonDocument doc;
-            doc["current"]      = FW_VERSION;
-            doc["interval_min"] = _updater.checkIntervalS() / 60;
-            String out;
-            serializeJson(doc, out);
-            _server.send(200, "application/json", out);
-            return;
-        }
-        JsonDocument doc;
-        doc["current"]      = FW_VERSION;
-        doc["interval_min"] = _updater.checkIntervalS() / 60;
-        doc["updating"]     = false;
-        String out;
-        serializeJson(doc, out);
-        _server.send(200, "application/json", out);
-        _server.client().flush();
-        _updater.checkNow();   // reboots if a new release is found
-    });
+    // Firmware upload: POST a .bin built by CI (or `pio run`) here.
+    _server.on("/api/upload", HTTP_POST,
+        [this]() {
+            bool ok = !Update.hasError();
+            _server.sendHeader("Connection", "close");
+            _server.send(ok ? 200 : 500, "application/json",
+                         ok ? "{\"status\":\"ok\"}"
+                            : "{\"status\":\"error\"}");
+            if (ok) {
+                appLog.add("FW", "upload applied, restarting");
+                delay(500);
+                ESP.restart();
+            }
+        },
+        [this]() { handleFirmwareUpload(); });
 
     _server.begin();
+}
+
+void SofarWebServer::handleFirmwareUpload() {
+    HTTPUpload& up = _server.upload();
+
+    if (up.status == UPLOAD_FILE_START) {
+        char lb[96];
+        snprintf(lb, sizeof(lb), "upload %s start free=%u blk=%u",
+                 up.filename.c_str(), (unsigned)ESP.getFreeHeap(),
+                 (unsigned)ESP.getMaxFreeBlockSize());
+        appLog.add("FW", lb);
+
+        // Free sockets/buffers so Update.begin() gets its contiguous block
+        WiFiUDP::stopAll();
+        WiFiClient::stopAllExcept(&_server.client());
+
+        uint32_t maxSize = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+        Update.runAsync(true);
+        if (!Update.begin(maxSize, U_FLASH)) {
+            snprintf(lb, sizeof(lb), "Update.begin failed: %s", Update.getErrorString().c_str());
+            appLog.add("FW", lb);
+        }
+    }
+    else if (up.status == UPLOAD_FILE_WRITE) {
+        if (Update.hasError()) return;
+        if (Update.write(up.buf, up.currentSize) != up.currentSize) {
+            char lb[80];
+            snprintf(lb, sizeof(lb), "write failed: %s", Update.getErrorString().c_str());
+            appLog.add("FW", lb);
+        }
+    }
+    else if (up.status == UPLOAD_FILE_END) {
+        if (Update.hasError()) return;
+        char lb[80];
+        if (Update.end(true)) snprintf(lb, sizeof(lb), "flashed %u bytes", (unsigned)up.totalSize);
+        else                  snprintf(lb, sizeof(lb), "end failed: %s", Update.getErrorString().c_str());
+        appLog.add("FW", lb);
+    }
+    else if (up.status == UPLOAD_FILE_ABORTED) {
+        Update.end();
+        appLog.add("FW", "upload aborted");
+    }
+    yield();
 }

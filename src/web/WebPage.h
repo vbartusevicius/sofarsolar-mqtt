@@ -81,8 +81,9 @@ h2{font-size:1em;color:#94a3b8;border-bottom:1px solid #1e293b;padding:8px 0;mar
 
 <div class="section"><h2>Firmware Update</h2>
 <div class="ctrl">
-<div class="fr"><label>Version</label><input id="fvw" readonly style="border:none"><button onclick="cu()">Check for Updates</button></div>
-<div class="fr"><label>Check every min</label><input id="fu" type="number" min="1" max="1440" step="1" value="10"><button onclick="su_()">Apply</button></div>
+<div class="fr"><label>Version</label><input id="fvw" readonly style="border:none"></div>
+<div class="fr"><label>firmware.bin</label><input id="fwf" type="file" accept=".bin"><button onclick="uf()">Upload &amp; Flash</button></div>
+<div class="fr"><label>Progress</label><span id="fup" class="tgt">idle</span></div>
 </div></div>
 
 <div class="section"><h2>System</h2>
@@ -146,12 +147,14 @@ function st(){var p="delta="+document.getElementById("td").value
 +"&keepalive="+document.getElementById("tk").value
 +"&lapse="+document.getElementById("tl").value;
 fetch("/api/tuning?"+p).then(function(){alert("Tuning applied & saved.");});}
-function cu(){fetch("/api/update").then(function(r){return r.json()}).then(function(d){
-alert("Checking for updates (current: "+d.current+").\nIf a release is found the device reboots to install it — reload in ~2 min.\nSee System Log for the result.");});}
-function su_(){fetch("/api/update?interval="+document.getElementById("fu").value)
-.then(function(r){return r.json()}).then(function(d){
-document.getElementById("fu").value=d.interval_min;
-alert("Check interval saved: "+d.interval_min+" min");});}
+function uf(){var i=document.getElementById("fwf"),s=document.getElementById("fup");
+if(!i.files.length){alert("Choose a firmware .bin first");return;}
+var fd=new FormData();fd.append("firmware",i.files[0],i.files[0].name);
+var x=new XMLHttpRequest();x.open("POST","/api/upload");
+x.upload.onprogress=function(e){if(e.lengthComputable)s.textContent=Math.round(e.loaded/e.total*100)+"%";};
+x.onload=function(){s.textContent=x.status==200?"flashed, rebooting...":"FAILED ("+x.status+")";};
+x.onerror=function(){s.textContent="connection lost";};
+s.textContent="uploading...";x.send(fd);}
 function ss(){
 var f=document.getElementById("sf");
 var p=new URLSearchParams(new FormData(f)).toString();
@@ -172,7 +175,6 @@ if(d.bsMaxPower!==undefined)document.getElementById("tm").value=d.bsMaxPower;
 if(d.keepaliveS!==undefined)document.getElementById("tk").value=d.keepaliveS;
 if(d.idleLapseMin!==undefined)document.getElementById("tl").value=d.idleLapseMin;
 if(d.firmware!==undefined)document.getElementById("fvw").value=d.firmware;
-if(d.otaCheckMin!==undefined)document.getElementById("fu").value=d.otaCheckMin;
 });
 </script></body></html>)rawliteral";
 

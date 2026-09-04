@@ -16,7 +16,7 @@ Forked from [Sofar2mqtt](https://github.com/IgorYbema/Sofar2mqtt) and rewritten 
 - **Web dashboard** at `http://<device-ip>/` with live data, settings, and battery-saver control
 - **WiFiManager** captive portal for first-time WiFi + MQTT setup
 - **ArduinoOTA** for over-the-air firmware updates
-- **GitHub release self-update** — checks the latest release every 10 min and flashes `firmware.bin` automatically
+- **Web firmware upload** — drop a `firmware.bin` in the web UI to flash over WiFi (no TLS, no cloud dependency)
 - **TaskManagerIO** cooperative task scheduling (no blocking delays in the main loop)
 - **ArduinoJson v7** for all JSON serialisation
 
@@ -134,11 +134,13 @@ IDE note: `.clangd` is machine-specific and gitignored; `tools/gen_clangd.py` re
 
 Connect RS485 A/B wires to the inverter's 485s port. Power the module from 5V USB.
 
-## Releases & Self-Update
+## Releases & Firmware Update
 
 Pushing to `main` triggers the **Release** workflow (`.github/workflows/release.yml`): it stamps `src/Version.h` with a `vYYYY.MM.DD.HHMM` (UTC) version, builds the firmware, and publishes a GitHub release with `firmware.bin`.
 
-Devices poll the repo's latest release every 10 minutes (first check 2 min after boot) and flash new firmware automatically via HTTPS OTA. The comparison uses the version string baked into the running firmware, so a locally-built `v0.0.0-dev` device will pick up the first published release. The web UI's **Firmware Update** panel (`/api/update`) triggers the check immediately.
+To update a device, download that `firmware.bin` and upload it in the web UI's **Firmware Update** panel (progress is shown; the device reboots when done). The running version is visible there, in the LCD SYS tab, in the MQTT state payload, and on the Home Assistant device page.
+
+Automatic HTTPS self-updating was deliberately removed: a TLS download needs ~22 KB of contiguous heap plus ~6 KB of stack on a chip with ~40 KB total, and GitHub's asset CDN does not support TLS max-fragment-length negotiation — so it could not be made reliable. `pio run -t upload` (USB) and ArduinoOTA (`pio run -t upload --upload-port <ip>`) also remain available.
 
 ## Configuration
 
