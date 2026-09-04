@@ -19,8 +19,6 @@ public:
     void loop();
     void connect();
     void publish();
-    void pause();
-    void resume()   { _paused = false; }
 
     bool ready()     const { return _ready; }
     bool connected() { return _mqtt.connected(); }
@@ -36,9 +34,8 @@ private:
     WiFiClient    _wifiClient;
     PubSubClient  _mqtt;
     bool          _ready  = false;
-    bool          _paused = false;
 
-    // End-to-end liveness through the broker (self-echo ping)
+    // Self-echo liveness ping state (broker round-trip health)
     unsigned long _lastPingAt = 0;
     uint32_t      _pingSeq    = 0;
     uint32_t      _echoSeq    = 0;

@@ -13,21 +13,16 @@ public:
     Display();
 
     void begin();
-
-    // Show a two-line centred message (used during boot).
     void showSplash(const char* line1, const char* line2);
 
-    // Redraw the LCD (internally rate-limited).  Two tabs:
-    // FLOW = power-flow diagram, SYS = system overview + log.
+    // FLOW tab = power-flow diagram, SYS tab = system overview + log
     void update(const InverterData& inv, const BatterySaver& bs,
                 const ModeController& ctrl, const char* serialNumber,
                 bool wifiOk, bool modbusOk, bool mqttOk);
 
-    // Touch handling.  Returns true only on a tap of the saver button in
-    // the FLOW tab (taps on the tab bar switch tabs instead).
+    // true only on a tap of the saver button (tab-bar taps switch tabs)
     bool pollTouch();
 
-    // Gradually dim after timeout; wake on touch.
     void handleDimming();
 
 private:
@@ -45,15 +40,14 @@ private:
     unsigned long _lastDimStep  = 0;
     bool          _needFullDraw = true;
     const char*   _sn           = "";
-    char          _touchDbg[40] = "";   // last tap, raw -> screen coords
+    char          _touchDbg[40] = "";
 
-    // Differential-redraw caches: text/lines are repainted only when their
-    // content actually changed (plain full redraws roll visibly over SPI).
+    // Repaint only changed content — full redraws roll visibly over SPI
     struct NodeCache { char value[20] = ""; char sub[28] = ""; uint16_t color = 0; bool valid = false; };
     struct ArrowCache { char label[12] = ""; bool dir = false; bool drawn = false; };
     struct ArrowDef { int16_t fx, fy, tx, ty, lx, ly; };
     static constexpr uint8_t SYS_LINES = 5;
-    static constexpr uint8_t LOG_LINES_MAX = 19;   // ~8 px per line below y=158
+    static constexpr uint8_t LOG_LINES_MAX = 19;
 
     NodeCache  _ndSolar, _ndGrid, _ndBatt, _ndHome;
     ArrowCache _arPv, _arGrid, _arBatt;

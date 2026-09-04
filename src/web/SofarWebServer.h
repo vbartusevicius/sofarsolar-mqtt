@@ -17,13 +17,10 @@ public:
                    ReleaseUpdater& updater);
 
     void begin();
-    void handleClient() { if (!_paused) _server.handleClient(); }
-    void pause();
-    void resume();
+    void handleClient() { _server.handleClient(); }
 
 private:
     ESP8266WebServer _server;
-    bool             _paused = false;
     EEConfig&        _cfg;
     Inverter&        _inv;
     BatterySaver&    _bs;

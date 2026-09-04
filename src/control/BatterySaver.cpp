@@ -38,23 +38,9 @@ void BatterySaver::toggle() {
     _active ? disable() : enable();
 }
 
-// ── Core loop (scheduled at INTERVAL_BSAVE) ────────────────────
-// Reads grid power and adjusts the charge target so the battery
-// absorbs only excess solar.
-//
-// Positive gridPower = exporting  → room to charge more
-// Negative gridPower = importing  → must reduce charge
-//
-// The target is accumulated and clamped to [0, BSAVE_MAX_POWER]
-// so the battery NEVER discharges.
-//
-// Flash protection: REG_PASSIVE_CTRL lives in the inverter's
-// non-volatile memory, so writes are minimised aggressively —
-//  · sub-BSAVE_MIN_DELTA target changes are not written
-//  · an unchanged target is re-sent only every PASSIVE_KEEPALIVE_MS
-//    (the inverter times out after ~60 s without a write)
-//  · after BSAVE_IDLE_LAPSE_MS at 0 W (no solar at night) writes
-//    stop completely and passive mode is allowed to lapse
+// Charges the battery from excess solar: grid export raises the charge
+// target, import lowers it (clamped so the battery never discharges).
+// Write-suppression policy lives in SaverAlgorithm.h.
 void BatterySaver::update() {
     if (!_active) return;
 
@@ -63,10 +49,8 @@ void BatterySaver::update() {
 
     unsigned long now = millis();
 
-    // Accumulate: positive grid power (export) → increase charge target
     _targetPower = saverAccumulateTarget(_targetPower, d.gridPower, _maxPower);
 
-    // Night lapse bookkeeping: sustained 0 W target → suspend writes
     if (_targetPower == 0) {
         if (_zeroStart == 0) _zeroStart = now;
     } else {

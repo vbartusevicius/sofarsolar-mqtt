@@ -1,6 +1,7 @@
 #include "Discovery.h"
 #include <ESP8266WiFi.h>
 #include <ArduinoJson.h>
+#include "Version.h"
 
 struct HaSensor {
     const char* id;
@@ -12,9 +13,7 @@ struct HaSensor {
 
 #define S(i, n, u, dc, sc) { i, n, u, dc, sc }
 
-// Kept in RAM: this struct is read field-by-field, which requires 32-bit
-// aligned memcpy_P access if placed in PROGMEM — plain const is safer and
-// costs <1 KB of RAM.
+// plain const (not PROGMEM): struct field reads would need memcpy_P
 static const HaSensor SENSORS[] = {
     // System
     S("run_state",       "Run State",            "",    nullptr,       "measurement"),
@@ -70,6 +69,7 @@ static const HaSensor SENSORS[] = {
     // Mode
     S("working_mode",    "Working Mode",            "",   nullptr,       "measurement"),
     S("battery_save_target","Battery Save Target",  "W",  "power",       "measurement"),
+    S("firmware",        "Firmware Version",        "",    nullptr,       nullptr),
 };
 
 static const uint8_t SENSOR_COUNT = sizeof(SENSORS) / sizeof(SENSORS[0]);
@@ -82,7 +82,7 @@ static void addDevice(JsonDocument& doc, const char* deviceName) {
     dev["name"] = deviceName;
     dev["mf"]   = "Sofar Solar";
     dev["mdl"]  = "HYD 20 KTL";
-    dev["sw"]   = "2.0.0";
+    dev["sw"]   = FW_VERSION;
     dev["cu"]   = "http://" + WiFi.localIP().toString();
 }
 

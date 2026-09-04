@@ -3,14 +3,12 @@
 #include "PassiveWriteCache.h"
 #include "util/AppLog.h"
 
-// ── Bulk-read wrapper ─────────────────────────────────────────
 bool Inverter::readBlock(uint16_t start, uint8_t count,
                          uint8_t* buf, uint8_t& sz)
 {
     return _mb.readHolding(MODBUS_SLAVE_ID, start, count, buf, sz);
 }
 
-// ── Value extraction from bulk response ────────────────────────
 uint16_t Inverter::u16(const uint8_t* b, uint16_t reg, uint16_t base) {
     uint16_t off = (reg - base) * 2;
     return (uint16_t)((b[off] << 8) | b[off + 1]);
@@ -25,9 +23,7 @@ uint32_t Inverter::u32(const uint8_t* b, uint16_t reg, uint16_t base) {
            ((uint32_t)b[off+2] << 8) | b[off+3];
 }
 
-// ── Read all sensor register blocks ───────────────────────────
-// Fills a staging copy and commits it only on full success, so
-// consumers never see a mix of old and new values.
+// Stage-and-swap: commit only the full read, never a mix of old/new values
 bool Inverter::readSensors() {
     bool ok = true;
     uint8_t sz;
@@ -139,7 +135,6 @@ bool Inverter::readSensors() {
     return ok;
 }
 
-// ── Read serial number (once at boot) ─────────────────────────
 bool Inverter::readSerialNumber() {
     uint8_t buf[16];
     uint8_t sz;
@@ -149,19 +144,15 @@ bool Inverter::readSerialNumber() {
     }
     for (int i = 0; i < 16; i++) _sn[i] = (char)buf[i];
     _sn[16] = '\0';
-    // Trim trailing nulls/spaces
-    for (int i = 15; i >= 0; i--) {
+    for (int i = 15; i >= 0; i--) {   // trim trailing NULs/spaces
         if (_sn[i] == '\0' || _sn[i] == ' ') _sn[i] = '\0';
         else break;
     }
     return _sn[0] != '\0';
 }
 
-// ── Send passive-mode command ──────────────────────────────────
-// Single choke point for all REG_PASSIVE_CTRL writes.  An identical
-// command is suppressed if the previous one is younger than
-// PASSIVE_KEEPALIVE_MS, so the inverter's non-volatile memory is not
-// worn out by redundant writes.
+// Single choke point for REG_PASSIVE_CTRL writes; suppression policy is in
+// passiveWriteDue + saverShouldSend (inverter NVM wear protection)
 bool Inverter::sendPassiveCommand(int32_t power) {
     return sendPassiveRange(power, power);
 }

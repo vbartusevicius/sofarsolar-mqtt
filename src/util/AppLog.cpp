@@ -13,7 +13,6 @@ void AppLog::pushStr(const char* s) {
 }
 
 void AppLog::add(const char* tag, const char* msg) {
-    // Timestamp
     char tmp[12];
     ultoa(millis() / 1000, tmp, 10);
     pushStr(tmp);
@@ -29,11 +28,9 @@ String AppLog::text() const {
     String out;
     out.reserve(_len);
     if (_len < BUF_SZ) {
-        // Buffer hasn't wrapped yet — data starts at 0
         for (unsigned int i = 0; i < _len; i++) out += _buf[i];
     } else {
-        // Wrapped — oldest data starts at _head
-        for (unsigned int i = 0; i < BUF_SZ; i++)
+        for (unsigned int i = 0; i < BUF_SZ; i++)   // wrapped: oldest at _head
             out += _buf[(_head + i) % BUF_SZ];
     }
     return out;

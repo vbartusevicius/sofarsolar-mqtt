@@ -98,8 +98,7 @@ void SofarWebServer::begin() {
         _server.send(200, "application/json", out);
     });
 
-    // Battery-saver tuning. Applies immediately (no reboot) and persists
-    // the clamped values; save() only commits to flash on real changes.
+    // applies immediately, no reboot; save() commits only on real changes
     _server.on("/api/tuning", [this]() {
         bool any = false;
         if (_server.hasArg("delta"))     { _bs.setMinDelta(_server.arg("delta").toInt());                _cfg.setBsaveDelta(_bs.minDelta());       any = true; }
@@ -121,38 +120,31 @@ void SofarWebServer::begin() {
         _server.send(200, "text/plain", appLog.text());
     });
 
-    // OTA release check + interval setting (minutes). If a flash starts
-    // the device reboots, so a non-empty "tag" in the response means
-    // "goodbye".
+    // Interval setting is answered normally; a check that finds a release
+    // reboots the device to install it, so that response never arrives.
     _server.on("/api/update", [this]() {
-        bool changed = false;
         if (_server.hasArg("interval")) {   // minutes
             _updater.setCheckIntervalS(_server.arg("interval").toInt() * 60UL);
             _cfg.setOtaCheckS(_updater.checkIntervalS());
-            changed = true;
+            _cfg.save();
+            JsonDocument doc;
+            doc["current"]      = FW_VERSION;
+            doc["interval_min"] = _updater.checkIntervalS() / 60;
+            String out;
+            serializeJson(doc, out);
+            _server.send(200, "application/json", out);
+            return;
         }
-        if (changed) _cfg.save();
-        String tag;
-        if (_server.hasArg("check") || !changed) tag = _updater.checkNow();
         JsonDocument doc;
         doc["current"]      = FW_VERSION;
-        doc["updating"]     = tag.length() > 0;
-        doc["tag"]          = tag;
         doc["interval_min"] = _updater.checkIntervalS() / 60;
+        doc["updating"]     = false;
         String out;
         serializeJson(doc, out);
         _server.send(200, "application/json", out);
+        _server.client().flush();
+        _updater.checkNow();   // reboots if a new release is found
     });
 
     _server.begin();
-}
-
-void SofarWebServer::pause() {
-    _paused = true;
-    _server.close();
-}
-
-void SofarWebServer::resume() {
-    _server.begin();
-    _paused = false;
 }

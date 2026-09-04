@@ -22,7 +22,6 @@ public:
     const char* mqttUser() const { return _user; }
     const char* mqttPass() const { return _pass; }
 
-    // Battery-saver tuning (all values are clamped by BatterySaver/Inverter)
     int32_t  bsaveDelta()    const { return _bsaveDelta; }
     int32_t  bsaveMaxPower() const { return _bsaveMax; }
     uint32_t keepaliveMs()   const { return (uint32_t)_keepaliveMs; }

@@ -3,10 +3,8 @@
 
 #include <stdint.h>
 
-// Pure decision logic for BatterySaver
+// Pure decision logic for BatterySaver (unit-tested on the native target)
 
-// Accumulate grid power into the charge target and clamp it so the
-// battery never discharges to the grid.
 inline int32_t saverAccumulateTarget(int32_t target, int32_t gridPower,
                                      int32_t maxPower) {
     target += gridPower;
@@ -15,12 +13,8 @@ inline int32_t saverAccumulateTarget(int32_t target, int32_t gridPower,
     return target;
 }
 
-// Decide whether the (already clamped) target must be written to the
-// inverter now.  Mirror of BatterySaver::update() semantics:
-//  · after idleLapseMs at 0 W (night) never write
-//  · write when the target changed by at least minDelta (hysteresis)
-//  · write on any 0 ↔ non-0 crossing
-//  · otherwise re-write only as keep-alive (inverter times out ~60 s)
+// Write the target only when: changed by ≥ minDelta, crossing 0, or the
+// keep-alive is due.  Never write during a sustained 0 W idle (night).
 inline bool saverShouldSend(int32_t target, int32_t lastSentTarget,
                             uint32_t now, uint32_t lastSentAt,
                             uint32_t zeroStart,

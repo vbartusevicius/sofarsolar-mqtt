@@ -50,7 +50,7 @@ bool EEConfig::load() {
     readEE(EE_PORT, EE_PORT_LEN, _port);
     readEE(EE_USER, EE_USER_LEN, _user);
     readEE(EE_PASS, EE_PASS_LEN, _pass);
-    // Tuning fields were added later; -1 = erased flash → keep compiled default
+    // -1 = erased flash (field never written) → keep compiled default
     int32_t v;
     if ((v = readEE32(EE_BSAVE_DELTA))   != -1) _bsaveDelta  = v;
     if ((v = readEE32(EE_BSAVE_MAX))     != -1) _bsaveMax    = v;
@@ -76,7 +76,5 @@ void EEConfig::save() {
     changed |= writeEE32(EE_KEEPALIVE_MS,  _keepaliveMs);
     changed |= writeEE32(EE_IDLE_LAPSE_MS, _idleLapseMs);
     changed |= writeEE32(EE_OTA_CHECK_S,   _otaCheckS);
-    // ESP8266 EEPROM.commit() erases + rewrites a whole flash sector;
-    // skip it entirely when nothing changed.
-    if (changed) EEPROM.commit();
+    if (changed) EEPROM.commit();   // commit rewrites a whole flash sector
 }

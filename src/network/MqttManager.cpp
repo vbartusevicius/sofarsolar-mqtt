@@ -30,7 +30,6 @@ void MqttManager::callbackTrampoline(char* topic, byte* payload,
 
 void MqttManager::handleMessage(const String& topic, const String& msg) {
     if (topic.endsWith("/ping")) {
-        // Echo came back — the link is alive end-to-end
         uint32_t seq = (uint32_t)msg.toInt();
         if ((uint32_t)(seq - _echoSeq) < 0x80000000UL) _echoSeq = seq;
         return;
@@ -54,13 +53,7 @@ void MqttManager::begin() {
     connect();
 }
 
-void MqttManager::pause() {
-    _paused = true;
-    if (_mqtt.connected()) _mqtt.disconnect();
-}
-
 void MqttManager::connect() {
-    if (_paused) return;
     if (_mqtt.connected()) return;
 
     int port = atoi(_cfg.mqttPort());
@@ -89,11 +82,9 @@ void MqttManager::connect() {
         snprintf(sub, sizeof(sub), "%s/ping", _cfg.name());
         _mqtt.subscribe(sub);
         appLog.add("MQTT", "Subscribed");
-        // Reset liveness counters for the fresh session
         _pingSeq = _echoSeq = 0;
         _lastPingAt = millis();
-        // Always re-publish discovery: a broker restart (e.g. Docker without
-        // a persistence volume) loses the retained configs otherwise.
+        // retained discovery configs die with a stateless broker restart
         publishHADiscovery(_mqtt, _cfg.name());
         appLog.add("MQTT", "HA discovery sent");
     } else {
@@ -102,11 +93,8 @@ void MqttManager::connect() {
     }
 }
 
-// ── Liveness: self-echo ping through the broker ────────────────
-// PubSubClient only inspects the socket; behind a TCP proxy (e.g. Traefik
-// in front of Mosquitto) the socket can stay open while the MQTT session
-// is dead — bytes vanish into the proxy and connected() stays true.
-// A periodic echo through the real path proves the link end-to-end.
+// PubSubClient only inspects the socket; behind a proxy the socket can stay
+// open while the session is dead. Only a broker round-trip proves the link.
 void MqttManager::sendEchoPing() {
     _pingSeq++;
     char topic[80], payload[12];
@@ -136,18 +124,18 @@ void MqttManager::forceReconnect(const char* reason) {
     char lb[80];
     snprintf(lb, sizeof(lb), "Forcing reconnect: %s rc=%d", reason, _mqtt.state());
     appLog.add("MQTT", lb);
-    _mqtt.disconnect();          // drops the socket; retry task reconnects
+    _mqtt.disconnect();          // retry task reconnects
     _pingSeq = _echoSeq = 0;
 }
 
 void MqttManager::loop() {
-    if (!_ready || _paused) return;
-    _mqtt.loop();                // cleans up state if the socket died
+    if (!_ready) return;
+    _mqtt.loop();
     if (_mqtt.connected()) checkLiveness();
 }
 
 void MqttManager::publish() {
-    if (!_ready || _paused) return;
+    if (!_ready) return;
     if (!_mqtt.connected()) {
         char lb[48];
         snprintf(lb, sizeof(lb), "Pub skip: disconnected rc=%d", _mqtt.state());
@@ -159,7 +147,7 @@ void MqttManager::publish() {
     char topic[80];
     snprintf(topic, sizeof(topic), "%s/state", _cfg.name());
 
-    // Stream straight to the socket — no intermediate String on the heap
+    // stream to the socket, no intermediate String
     size_t len = measureJson(doc);
     bool ok = _mqtt.beginPublish(topic, len, false);
     if (ok) {

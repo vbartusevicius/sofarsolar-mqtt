@@ -5,9 +5,6 @@
 #include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
 
-// Owns the inverter's control mode ("auto" | "charge" | "standby" |
-// "battery_saver") and the associated setpoints.  All command paths
-// (MQTT callbacks, web routes, touch button) go through here.
 class ModeController {
 public:
     ModeController(Inverter& inv, BatterySaver& bs) : _inv(inv), _bs(bs) {}

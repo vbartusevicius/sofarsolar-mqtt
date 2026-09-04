@@ -42,10 +42,11 @@
 #define BTN_X           8
 #define BTN_W         224
 
-// XPT2046 raw ranges (after ts.setRotation(1)).  The axes are SWAPPED and
-// Y inverted: raw X travels with screen Y, raw Y with screen X.  If touches
-// land offset or mirrored, trim these four constants — the SYS tab shows
-// "raw -> screen" of the last tap for exactly this purpose.
+// XPT2046 mapping knobs.  If taps land wrong, /log shows "raw -> scr" for
+// every tap; flip these four switches / ranges to match the panel.
+#define TS_SWAP_AXES  1   // raw X travels with screen Y
+#define TS_INV_X      0   // invert screen X direction
+#define TS_INV_Y      0   // invert screen Y direction
 #define TS_RAW_X_MIN  250
 #define TS_RAW_X_MAX 3800
 #define TS_RAW_Y_MIN  300
@@ -74,7 +75,7 @@ void Display::showSplash(const char* line1, const char* line2) {
     drawCentered(150, String(line2), 2, CLR_PV);
 }
 
-// ── Shared drawing helpers ─────────────────────────────────────
+
 void Display::drawCentered(int16_t y, const String& text, uint8_t size,
                            uint16_t fg)
 {
@@ -85,9 +86,8 @@ void Display::drawCentered(int16_t y, const String& text, uint8_t size,
     _tft.print(text);
 }
 
-// Repaint text without clearing a rectangle: erase the previous glyph
-// cells exactly by printing them in the background colour, then print the
-// new text with background fill.  This is what kills the visible redraw.
+// Erase the previous string exactly by reprinting it in the background
+// colour, then print the new one — no fillRect "wipe" frame.
 void Display::printOver(int16_t x0, int16_t x1, int16_t y, uint8_t size,
                         uint16_t fg, uint16_t bg,
                         const char* prev, const char* next)
@@ -137,10 +137,11 @@ void Display::redrawNode(int16_t x, int16_t y, int16_t w, int16_t h,
                          const char* name, const char* value, const char* sub,
                          uint16_t color, NodeCache& c)
 {
-    // Frame (border colour change = full frame redraw, e.g. export→import)
+    // Border colour change (export→import etc.): repaint the whole node —
+    // the old text must be erased too, not just the frame.
     if (!c.valid || c.color != color) {
-        _tft.drawRect(x, y - 1, w, h + 1, CLR_BG);   // erase old border
-        if (!c.valid) drawNodeFrame(x, y, w, h, name);
+        _tft.fillRect(x, y, w, h, CLR_BG);
+        drawNodeFrame(x, y, w, h, name);
         _tft.drawRect(x, y, w, h, color);
         c.valid = true;
         c.color = color;
@@ -224,7 +225,7 @@ void Display::invalidateCaches() {
     _logValid  = false;
 }
 
-// ── Top-level update ───────────────────────────────────────────
+
 void Display::update(const InverterData& inv, const BatterySaver& bs,
                      const ModeController& ctrl, const char* sn,
                      bool wifiOk, bool modbusOk, bool mqttOk)
@@ -247,32 +248,28 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
     else                  updateSys(inv, _sn, wifiOk, modbusOk, mqttOk);
 }
 
-// ── FLOW tab ───────────────────────────────────────────────────
+
 void Display::updateFlow(const InverterData& inv, const BatterySaver& bs,
                          const ModeController& ctrl)
 {
     char v[24], s[32];
 
-    // Solar node
     snprintf(v, sizeof(v), "%ld W", (long)inv.pvPower);
     snprintf(s, sizeof(s), "today %.1f kWh", (double)inv.todayGeneration);
     redrawNode(ND_SOLAR_X, ND_SOLAR_Y, ND_W, ND_H, " Solar", v, s, CLR_PV, _ndSolar);
 
-    // Grid node (colour encodes export/import direction)
     uint16_t gc = inv.gridPower >= 0 ? CLR_EXPORT : CLR_IMPORT;
     snprintf(v, sizeof(v), "%ld W", (long)(inv.gridPower >= 0 ? inv.gridPower : -inv.gridPower));
     snprintf(s, sizeof(s), "exp %.1f imp %.1f",
              (double)inv.todayExport, (double)inv.todayImport);
     redrawNode(ND_GRID_X, ND_SIDE_Y, ND_SIDE_W, ND_H, " Grid", v, s, gc, _ndGrid);
 
-    // Battery node
     uint16_t bc = inv.batteryPower >= 0 ? CLR_CHARGE : CLR_DISCHG;
     snprintf(v, sizeof(v), "%ld W", (long)(inv.batteryPower >= 0 ? inv.batteryPower : -inv.batteryPower));
     snprintf(s, sizeof(s), "SOC %u%% +%.1f kWh",
              (unsigned)inv.batterySOC, (double)inv.todayCharged);
     redrawNode(ND_BATT_X, ND_SIDE_Y, ND_SIDE_W, ND_H, " Battery", v, s, bc, _ndBatt);
 
-    // Home node
     snprintf(v, sizeof(v), "%ld W", (long)inv.loadPower);
     snprintf(s, sizeof(s), "use %.1f kWh", (double)inv.todayConsumption);
     redrawNode(ND_HOME_X, ND_HOME_Y, ND_W, ND_H, " Home", v, s, ILI9341_WHITE, _ndHome);
@@ -295,7 +292,6 @@ void Display::updateFlow(const InverterData& inv, const BatterySaver& bs,
     snprintf(lb, sizeof(lb), "%ldW", (long)(bw >= 0 ? bw : -bw));
     redrawArrow(AR_BATT, bw >= 0, bw >= 0 ? CLR_CHARGE : CLR_DISCHG, lb, _arBatt);
 
-    // Saver button / mode banner
     bool active = bs.isActive();
     char line2[36];
     if (active) snprintf(line2, sizeof(line2), "Target: %ld W", (long)bs.targetPower());
@@ -325,7 +321,7 @@ void Display::updateFlow(const InverterData& inv, const BatterySaver& bs,
     }
 }
 
-// ── SYS tab ────────────────────────────────────────────────────
+
 void Display::sysPrint(uint8_t idx, int16_t y, const char* text)
 {
     if (_sysValid && strcmp(_sysCache[idx], text) == 0) return;
@@ -408,7 +404,6 @@ void Display::updateSys(const InverterData& inv, const char* sn,
     snprintf(v, sizeof(v), "Inverter SN: %s", sn);
     sysPrint(3, 76, v);
 
-    // Touch calibration aid (raw -> mapped of last tap)
     snprintf(v, sizeof(v), "Touch: %s", _touchDbg[0] ? _touchDbg : "-");
     sysPrint(4, 88, v);
 
@@ -424,7 +419,7 @@ void Display::updateSys(const InverterData& inv, const char* sn,
     drawLogTail(158);
 }
 
-// ── Touch / backlight ──────────────────────────────────────────
+
 bool Display::pollTouch() {
     if (!_ts.tirqTouched()) { _touchedPrev = false; return false; }
     if (!_ts.touched())     { _touchedPrev = false; return false; }
@@ -433,16 +428,17 @@ bool Display::pollTouch() {
     _touchedPrev = true;
     _lastTouch   = millis();
 
-    if (!_screenOn) { wake(); return false; }   // first tap wakes screen
+    if (!_screenOn) { wake(); return false; }
 
     TS_Point p = _ts.getPoint();
-    // Axes swapped + screen-Y inverted (see TS_RAW_* comment)
-    int16_t sx = map(p.y, TS_RAW_Y_MIN, TS_RAW_Y_MAX, 0, 240);
-    int16_t sy = map(p.x, TS_RAW_X_MIN, TS_RAW_X_MAX, 320, 0);
+    int16_t rx = TS_SWAP_AXES ? p.y : p.x;
+    int16_t ry = TS_SWAP_AXES ? p.x : p.y;
+    int16_t sx = map(rx, TS_RAW_X_MIN, TS_RAW_X_MAX, TS_INV_X ? 240 : 0, TS_INV_X ? 0 : 240);
+    int16_t sy = map(ry, TS_RAW_Y_MIN, TS_RAW_Y_MAX, TS_INV_Y ? 320 : 0, TS_INV_Y ? 0 : 320);
 
-    // Debug: last tap raw -> mapped, shown on the SYS tab
     snprintf(_touchDbg, sizeof(_touchDbg), "raw %d,%d -> scr %d,%d",
              (int)p.x, (int)p.y, (int)sx, (int)sy);
+    appLog.add("TCH", _touchDbg);
 
     if (sy >= 0 && sy < TAB_H) {           // tab bar
         setTab(sx < TAB_FLOW_X1 ? TAB_FLOW : TAB_SYS);
@@ -454,7 +450,7 @@ bool Display::pollTouch() {
 }
 
 void Display::wake() {
-    _tft.begin();                // re-init SPI + ILI9341 command sequence
+    _tft.begin();
     _tft.setRotation(2);
     _brightness = 32;
     analogWrite(PIN_TFT_LED, _brightness);

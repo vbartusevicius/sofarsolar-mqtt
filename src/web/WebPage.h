@@ -146,9 +146,8 @@ function st(){var p="delta="+document.getElementById("td").value
 +"&keepalive="+document.getElementById("tk").value
 +"&lapse="+document.getElementById("tl").value;
 fetch("/api/tuning?"+p).then(function(){alert("Tuning applied & saved.");});}
-function cu(){fetch("/api/update?check=1").then(function(r){return r.json()}).then(function(d){
-if(d.updating)alert("Updating to "+d.tag+" — the device will reboot. Reload the page in a minute.");
-else alert("No update started. Current: "+d.current+"\n(see System Log for details)");});}
+function cu(){fetch("/api/update").then(function(r){return r.json()}).then(function(d){
+alert("Checking for updates (current: "+d.current+").\nIf a release is found the device reboots to install it — reload in ~2 min.\nSee System Log for the result.");});}
 function su_(){fetch("/api/update?interval="+document.getElementById("fu").value)
 .then(function(r){return r.json()}).then(function(d){
 document.getElementById("fu").value=d.interval_min;

@@ -17,8 +17,7 @@ public:
     bool    isActive()    const { return _active; }
     int32_t targetPower() const { return _targetPower; }
 
-    // Runtime-tunable parameters (persisted via EEConfig).
-    // Setters clamp to safe ranges.
+    // Setters clamp to safe ranges; values persist via EEConfig
     void     setMinDelta(int32_t w);
     void     setMaxPower(int32_t w);
     void     setIdleLapse(uint32_t ms);

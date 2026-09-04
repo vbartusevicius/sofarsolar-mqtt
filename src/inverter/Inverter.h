@@ -71,10 +71,8 @@ public:
     bool sendPassiveCommand(int32_t power);
     bool sendPassiveRange(int32_t minPower, int32_t maxPower);
 
-    // How often an unchanged passive command is re-sent (inverter
-    // times out ~60 s without a write).  Clamped to [5 s, 55 s] —
-    // values outside that range either spam the inverter's flash or
-    // let passive mode lapse unintentionally.
+    // Idential passive commands are re-sent at most this often; the
+    // register lives in the inverter's NVM.  Clamped to [5 s, 55 s].
     void     setKeepaliveMs(uint32_t ms);
     uint32_t keepaliveMs() const { return _keepaliveMs; }
 

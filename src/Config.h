@@ -92,11 +92,7 @@
 #define INTERVAL_DISPLAY   1000
 #define INTERVAL_MQTT_PUB  10000
 #define INTERVAL_MQTT_RETRY 30000
-// End-to-end liveness: echo a sequence number through the broker; if
-// MQTT_ECHO_MISS_TOLERANCE consecutive pings never come back, the link is
-// declared stale and force-reconnected (covers half-open TCP behind
-// proxies, where PubSubClient still reports "connected").
-#define MQTT_ECHO_PING_MS       60000UL
+#define MQTT_ECHO_PING_MS       60000UL  // this many missed broker echoes → force reconnect
 #define MQTT_ECHO_MISS_TOLERANCE 3
 #define OTA_CHECK_INTERVAL_S    600      // default release-check interval
 #define SCREEN_DIM_MS      30000
@@ -105,9 +101,7 @@
 #define BSAVE_MIN_DELTA    100      // W  hysteresis: ignore smaller target changes
 #define BSAVE_IDLE_LAPSE_MS 600000UL // stop writes after 10 min at 0 W (night)
 
-// Inverter flash protection: an identical passive-mode command is re-sent
-// at most this often (inverter reverts to standby ~60 s without a write).
-#define PASSIVE_KEEPALIVE_MS 45000UL
+#define PASSIVE_KEEPALIVE_MS 45000UL  // inverter times out passive mode after ~60 s
 
 #define EE_SIZE       512
 #define EE_MAGIC      0       //  1 byte  '1' = configured
@@ -121,11 +115,9 @@
 #define EE_USER_LEN   32
 #define EE_PASS       167     // 32 bytes
 #define EE_PASS_LEN   32
-// Legacy Sofar2mqtt layout fields, kept for settings compatibility with
-// the parent project; not read by this firmware.
+// Legacy Sofar2mqtt layout, written (not read) for settings compatibility
 #define EE_INVERTER_MODEL 199 // 2 = HYDV2
 #define EE_TFT_MODEL      200 // 1 = TFT present
-// Battery-saver tuning (4 bytes each, little-endian int32)
 #define EE_BSAVE_DELTA    204
 #define EE_BSAVE_MAX      208
 #define EE_KEEPALIVE_MS   212

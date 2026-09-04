@@ -30,21 +30,14 @@ static SofarWebServer webServer(eeConfig, inverter, bsave, mqttMgr, control, upd
 
 HeapStats heapStats;
 
-void otaHeapTeardown() {
-    appLog.add("OTA", "freeing MQTT + web server");
-    mqttMgr.pause();
-    webServer.pause();
-}
-void otaHeapResume() {
-    webServer.resume();
-    mqttMgr.resume();   // retry task reconnects within 30 s
-}
-
 void setup() {
+    // Before anything else allocates: install a release parked by a
+    // previous run (a TLS download needs ~22 KB contiguous heap).
+    updater.flashPendingAtBoot();
+
     eeConfig.begin();
     bool configLoaded = eeConfig.load();
 
-    // Apply battery-saver tuning (values are clamped by the setters)
     bsave.setMinDelta(eeConfig.bsaveDelta());
     bsave.setMaxPower(eeConfig.bsaveMaxPower());
     bsave.setIdleLapse(eeConfig.idleLapseMs());
@@ -67,28 +60,14 @@ void setup() {
     display.showSplash("WiFi Setup", "SofarBatterySaver");
     setupWiFi(eeConfig);
 
-    if (updater.hasPendingFlash()) {
-        display.showSplash("OTA Update", "flashing, do not power off");
-        unsigned long t0 = millis();
-        while (WiFi.status() != WL_CONNECTED && millis() - t0 < 30000) {
-            wifiLoop();
-            delay(100);
-        }
-        updater.maybeFlashPending();   // restarts on success
-    }
-
     ArduinoOTA.setHostname(eeConfig.name());
     ArduinoOTA.begin();
     webServer.begin();
     MDNS.begin(eeConfig.name());
 
-    updater.setHeapHooks(otaHeapTeardown, otaHeapResume);
-
-    // Suspended during OTA download/flash (updater.busy()) so the HTTP
-    // stream and heap stay uncontended; grid data is frozen then anyway.
-    taskManager.scheduleFixedRate(INTERVAL_SENSORS,    []() { if (!updater.busy()) inverter.readSensors(); });
-    taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() { if (!updater.busy()) bsave.update(); });
-    taskManager.scheduleFixedRate(INTERVAL_MQTT_PUB,   []() { if (!updater.busy()) mqttMgr.publish(); });
+    taskManager.scheduleFixedRate(INTERVAL_SENSORS,    []() { inverter.readSensors(); });
+    taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() { bsave.update(); });
+    taskManager.scheduleFixedRate(INTERVAL_MQTT_PUB,   []() { mqttMgr.publish(); });
     taskManager.scheduleFixedRate(INTERVAL_MQTT_RETRY, []() {
         if (inverter.hasError()) return;
         if (!mqttMgr.ready()) mqttMgr.begin();
@@ -98,7 +77,7 @@ void setup() {
         display.update(inverter.data(), bsave, control, inverter.serialNumber(),
                        WiFi.isConnected(), !inverter.hasError(), mqttMgr.connected());
     });
-    taskManager.scheduleFixedRate(60000, []() { updater.run(); });   // self-paced
+    taskManager.scheduleFixedRate(60000, []() { updater.run(); });
     taskManager.scheduleFixedRate(1000, []() { heapStats.update(); });
     taskManager.scheduleFixedRate(60000, []() {
         char lb[80];
@@ -115,7 +94,7 @@ void loop() {
     ArduinoOTA.handle();
     MDNS.update();
     webServer.handleClient();
-    if (!updater.busy()) mqttMgr.loop();
+    mqttMgr.loop();
 
     if (display.pollTouch()) control.toggleBatterySaver();
     display.handleDimming();

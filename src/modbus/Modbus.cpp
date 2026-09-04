@@ -6,7 +6,6 @@ void Modbus::begin(unsigned long baud) {
     Serial.begin(baud);
 }
 
-// ── CRC-16 / Modbus ────────────────────────────────────────────
 void Modbus::calcCRC(uint8_t* frame, uint8_t len) {
     uint16_t crc = modbusCrc16(frame, len - 2);
     frame[len - 2] = crc & 0xFF;
@@ -19,17 +18,12 @@ bool Modbus::checkCRC(const uint8_t* frame, uint8_t len) const {
     return received == modbusCrc16(frame, len - 2);
 }
 
-// ── Flush serial buffers ───────────────────────────────────────
 void Modbus::flush() {
     Serial.flush();
     delay(20);
     while (Serial.available()) Serial.read();
 }
 
-// ── Listen for a response frame ────────────────────────────────
-// The first byte may take up to MODBUS_TIMEOUT_MS to arrive;
-// subsequent bytes within the frame must follow within
-// MODBUS_INTERBYTE_MS, so a dead link can only block one transfer.
 int Modbus::listen(uint8_t slaveId, uint8_t* frame, uint8_t& frameSize,
                    uint8_t* data, uint8_t& dataSize)
 {
@@ -94,7 +88,6 @@ int Modbus::listen(uint8_t slaveId, uint8_t* frame, uint8_t& frameSize,
     return 0;
 }
 
-// ── Read Holding Registers (FC 0x03) ───────────────────────────
 bool Modbus::readHolding(uint8_t slaveId, uint16_t reg, uint8_t count,
                          uint8_t* data, uint8_t& dataSize)
 {
@@ -119,7 +112,6 @@ bool Modbus::readHolding(uint8_t slaveId, uint16_t reg, uint8_t count,
     return rc == 0;
 }
 
-// ── Write Multiple Registers (FC 0x10) ─────────────────────────
 bool Modbus::writeMultiple(uint8_t slaveId, uint16_t reg, uint8_t regCount,
                            const uint8_t* payload, uint8_t payloadLen)
 {

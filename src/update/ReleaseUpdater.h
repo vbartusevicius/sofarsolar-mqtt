@@ -4,44 +4,36 @@
 #include <Arduino.h>
 #include "Config.h"
 
-// Periodically checks the GitHub repository's latest release and OTA-updates
-// the firmware from the release asset:
+// OTA from the GitHub repo's latest release asset
 //   https://github.com/<repo>/releases/download/<tag>/firmware.bin
+//
+// A TLS download needs ~22 KB contiguous heap + ~6 KB stack, which is not
+// available once WiFiManager/display/MQTT/web are up.  So a runtime check
+// only parks the release tag in RTC memory and reboots; the flash itself
+// runs from flashPendingAtBoot() before anything else allocates.
 class ReleaseUpdater {
 public:
     static constexpr unsigned long FIRST_CHECK_DELAY_MS = 120000;
 
+    void flashPendingAtBoot();
+
     void run();
     String checkNow();
-    bool     busy() const { return _busy; }
 
     void     setCheckIntervalS(uint32_t s);
     uint32_t checkIntervalS() const { return _checkIntervalMs / 1000; }
 
-    bool hasPendingFlash() const;
-    void maybeFlashPending();
-
-    using HeapHook = void (*)();
-    void setHeapHooks(HeapHook teardown, HeapHook resume) {
-        _teardownHook = teardown;
-        _resumeHook   = resume;
-    }
-
 private:
     unsigned long _nextCheckAt     = FIRST_CHECK_DELAY_MS;
     uint32_t      _checkIntervalMs = OTA_CHECK_INTERVAL_S * 1000UL;
-    bool          _busy            = false;
-    HeapHook      _teardownHook    = nullptr;
-    HeapHook      _resumeHook      = nullptr;
-    bool          _teardownUsed    = false;
-    String        _failedTag;          // release tag that failed to flash
 
-    // Repo that publishes release binaries ("owner/name")
     static constexpr const char* GITHUB_REPO = "vbartusevicius/sofarsolar-mqtt";
 
     String checkForUpdates();
     bool   fetchLatestTag(String& tagOut);
-    bool   flashFromRelease(const String& tag);
+    bool   resolveAssetUrl(const String& tag, String& urlOut);
+    bool   downloadAndFlash(const String& url);
+    bool   connectStoredWiFi(uint32_t timeoutMs);
 };
 
 #endif // SOFAR_RELEASE_UPDATER_H

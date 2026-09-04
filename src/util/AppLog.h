@@ -10,8 +10,7 @@ public:
 
     String text() const;
 
-    // Monotonic counter, bumped on every add() — lets consumers redraw
-    // only when the log actually changed.
+    // bumped on every add(); lets consumers redraw only when the log changed
     unsigned int serial() const { return _serial; }
 
     unsigned int used() const { return _len; }
