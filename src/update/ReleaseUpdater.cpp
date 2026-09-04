@@ -94,25 +94,71 @@ bool ReleaseUpdater::fetchLatestTag(String& tagOut) {
 }
 
 bool ReleaseUpdater::flashFromRelease(const String& tag) {
+    _busy = true;   // periodic tasks pause while we download/flash
+
     char hb[64];
     snprintf(hb, sizeof(hb), "OTA: heap free=%u max-block=%u",
              (unsigned)heapStats.freeHeap, (unsigned)heapStats.maxBlock);
     appLog.add("OTA", hb);
 
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setBufferSizes(512, 512);   // same as the API check — big default
-                                       // TLS record buffers don't fit our heap
-    ESP8266HTTPUpdate httpUpdate;
-    httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    httpUpdate.rebootOnUpdate(false);
-
     String url = String("https://github.com/") + GITHUB_REPO +
                  "/releases/download/" + tag + "/firmware.bin";
 
-    appLog.add("OTA", "flashing firmware...");
-    t_httpUpdate_return result = httpUpdate.update(client, url, FW_VERSION);
+    // Step 1: resolve the asset redirect ourselves.  github.com 302s to
+    // objects.githubusercontent.com; letting HTTPClient carry the SAME
+    // WiFiClientSecure across hosts corrupts the BearSSL session and the
+    // server drops us mid-transfer (error -5 "connection lost").
+    String downloadUrl;
+    {
+        WiFiClientSecure probe;
+        probe.setInsecure();
+        probe.setBufferSizes(512, 512);
+        probe.setTimeout(10000);
+        HTTPClient http;
+        http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+        const char* keys[] = { "Location" };
+        http.collectHeaders(keys, 1);
+        if (!http.begin(probe, url)) {
+            appLog.add("OTA", "redirect probe: begin failed");
+            _busy = false;
+            return false;
+        }
+        http.addHeader("User-Agent", "sofarsolar-mqtt");
+        int code = http.GET();
+        if (code == HTTP_CODE_FOUND || code == HTTP_CODE_MOVED_PERMANENTLY) {
+            downloadUrl = http.header("Location");
+        } else if (code == HTTP_CODE_OK) {
+            downloadUrl = url;
+        }
+        http.end();
+        if (downloadUrl.length() == 0) {
+            snprintf(hb, sizeof(hb), "redirect probe: HTTP %d", code);
+            appLog.add("OTA", hb);
+            _busy = false;
+            return false;
+        }
+    }
+    appLog.add("OTA", "redirect resolved, downloading...");
+
+    // Step 2: fresh client, direct download, no further redirects
+    t_httpUpdate_return result;
+    {
+        WiFiClientSecure client;
+        client.setInsecure();
+        client.setBufferSizes(1024, 512);
+        client.setTimeout(30000);           // slow TLS + 500 kB payload
+
+        ESP8266HTTPUpdate httpUpdate;
+        httpUpdate.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+        httpUpdate.rebootOnUpdate(false);
+
+        appLog.add("OTA", "flashing firmware...");
+        result = httpUpdate.update(client, downloadUrl, FW_VERSION);
+    }
+    _busy = false;
+
     if (result != HTTP_UPDATE_OK) {
+        ESP8266HTTPUpdate httpUpdate;   // reuse for error strings only
         char lb[96];
         snprintf(lb, sizeof(lb), "OTA failed, error %d: %s",
                  httpUpdate.getLastError(),

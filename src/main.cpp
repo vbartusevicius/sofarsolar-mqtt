@@ -62,9 +62,11 @@ void setup() {
     webServer.begin();
     MDNS.begin(eeConfig.name());
 
-    taskManager.scheduleFixedRate(INTERVAL_SENSORS,    []() { inverter.readSensors(); });
-    taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() { bsave.update(); });
-    taskManager.scheduleFixedRate(INTERVAL_MQTT_PUB,   []() { mqttMgr.publish(); });
+    // Suspended during OTA download/flash (updater.busy()) so the HTTP
+    // stream and heap stay uncontended; grid data is frozen then anyway.
+    taskManager.scheduleFixedRate(INTERVAL_SENSORS,    []() { if (!updater.busy()) inverter.readSensors(); });
+    taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() { if (!updater.busy()) bsave.update(); });
+    taskManager.scheduleFixedRate(INTERVAL_MQTT_PUB,   []() { if (!updater.busy()) mqttMgr.publish(); });
     taskManager.scheduleFixedRate(INTERVAL_MQTT_RETRY, []() {
         if (inverter.hasError()) return;
         if (!mqttMgr.ready()) mqttMgr.begin();
@@ -91,7 +93,7 @@ void loop() {
     ArduinoOTA.handle();
     MDNS.update();
     webServer.handleClient();
-    mqttMgr.loop();
+    if (!updater.busy()) mqttMgr.loop();
 
     if (display.pollTouch()) control.toggleBatterySaver();
     display.handleDimming();

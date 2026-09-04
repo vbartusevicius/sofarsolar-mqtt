@@ -9,24 +9,19 @@
 //   https://github.com/<repo>/releases/download/<tag>/firmware.bin
 class ReleaseUpdater {
 public:
-    // Seconds after boot before the first check.
     static constexpr unsigned long FIRST_CHECK_DELAY_MS = 120000;
 
-    // Call frequently; runs the actual check only when due.
     void run();
-
-    // Force an immediate check (web UI "check for updates" button).
-    // Returns an empty string on "already up to date" / "check failed",
-    // or the release tag if a flash is in progress (device reboots after).
     String checkNow();
+    bool     busy() const { return _busy; }
 
-    // Runtime-tunable check interval in seconds, clamped to [60, 86400].
     void     setCheckIntervalS(uint32_t s);
     uint32_t checkIntervalS() const { return _checkIntervalMs / 1000; }
 
 private:
     unsigned long _nextCheckAt     = FIRST_CHECK_DELAY_MS;
     uint32_t      _checkIntervalMs = OTA_CHECK_INTERVAL_S * 1000UL;
+    bool          _busy            = false;
 
     // Repo that publishes release binaries ("owner/name")
     static constexpr const char* GITHUB_REPO = "vbartusevicius/sofarsolar-mqtt";
