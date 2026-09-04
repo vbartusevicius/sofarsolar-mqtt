@@ -7,6 +7,7 @@
 #include <ArduinoJson.h>
 
 #include "util/AppLog.h"
+#include "util/HeapStats.h"
 #include "Version.h"
 
 void ReleaseUpdater::setCheckIntervalS(uint32_t s) {
@@ -93,9 +94,15 @@ bool ReleaseUpdater::fetchLatestTag(String& tagOut) {
 }
 
 bool ReleaseUpdater::flashFromRelease(const String& tag) {
+    char hb[64];
+    snprintf(hb, sizeof(hb), "OTA: heap free=%u max-block=%u",
+             (unsigned)heapStats.freeHeap, (unsigned)heapStats.maxBlock);
+    appLog.add("OTA", hb);
+
     WiFiClientSecure client;
     client.setInsecure();
-
+    client.setBufferSizes(512, 512);   // same as the API check — big default
+                                       // TLS record buffers don't fit our heap
     ESP8266HTTPUpdate httpUpdate;
     httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     httpUpdate.rebootOnUpdate(false);

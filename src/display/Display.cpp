@@ -19,12 +19,10 @@
 #define CLR_TARGET   ILI9341_CYAN
 #define CLR_ACTIVE   ILI9341_GREEN
 #define CLR_OFF      0x8410            // dim grey
-#define CLR_TAB_BAR  0x10A2            // tab strip background
 
 #define CHAR_W         6   // classic GFX font is 6 px wide at size 1
 
-#define TAB_H         26
-#define TAB_FLOW_X0    0
+#define TAB_H         32
 #define TAB_FLOW_X1  120
 
 // Flow-tab node geometry (240x320 portrait)
@@ -32,7 +30,6 @@
 #define ND_H           54
 #define ND_SOLAR_X     60
 #define ND_SOLAR_Y     34
-#define ND_SIDE_X       8
 #define ND_SIDE_Y      122
 #define ND_SIDE_W      104
 #define ND_GRID_X       8
@@ -45,7 +42,10 @@
 #define BTN_X           8
 #define BTN_W         224
 
-// XPT2046 raw ranges (after rotation); trim these if taps are offset
+// XPT2046 raw ranges (after ts.setRotation(1)).  The axes are SWAPPED and
+// Y inverted: raw X travels with screen Y, raw Y with screen X.  If touches
+// land offset or mirrored, trim these four constants — the SYS tab shows
+// "raw -> screen" of the last tap for exactly this purpose.
 #define TS_RAW_X_MIN  250
 #define TS_RAW_X_MAX 3800
 #define TS_RAW_Y_MIN  300
@@ -85,79 +85,143 @@ void Display::drawCentered(int16_t y, const String& text, uint8_t size,
     _tft.print(text);
 }
 
+// Repaint text without clearing a rectangle: erase the previous glyph
+// cells exactly by printing them in the background colour, then print the
+// new text with background fill.  This is what kills the visible redraw.
+void Display::printOver(int16_t x0, int16_t x1, int16_t y, uint8_t size,
+                        uint16_t fg, uint16_t bg,
+                        const char* prev, const char* next)
+{
+    _tft.setTextSize(size);
+    _tft.setCursor(x0, y);
+    _tft.setTextColor(bg, bg);
+    _tft.print(prev);
+    _tft.setCursor(x1, y);
+    _tft.setTextColor(fg, bg);
+    _tft.print(next);
+}
+
 void Display::drawTabBar() {
-    _tft.fillRect(0, 0, 240, TAB_H, CLR_TAB_BAR);
-    const uint16_t activeBg = 0x0010;                 // dark blue
+    const uint16_t barBg    = 0x0841;   // dim grey-blue
+    const uint16_t activeBg = 0x0010;   // dark blue
+    _tft.fillRect(0, 0, 240, TAB_H, barBg);
     for (int i = 0; i < 2; i++) {
         int16_t x = i * 120;
         bool active = ((int)_tab == i);
         if (active) _tft.fillRect(x, 0, 120, TAB_H, activeBg);
         const char* label = i == 0 ? "FLOW" : "SYS";
         _tft.setTextSize(2);
-        _tft.setTextColor(active ? ILI9341_WHITE : CLR_OFF,
-                          active ? activeBg : CLR_TAB_BAR);
+        _tft.setTextColor(active ? ILI9341_WHITE : 0xC618,
+                          active ? activeBg : barBg);
         int16_t tw = strlen(label) * CHAR_W * 2;
-        _tft.setCursor(x + (120 - tw) / 2, 6);
+        _tft.setCursor(x + (120 - tw) / 2, 7);
         _tft.print(label);
-        if (i > 0) _tft.drawFastVLine(x, 2, TAB_H - 4, CLR_OFF);
+        if (active)
+            _tft.fillRect(x, TAB_H - 3, 120, 3, CLR_PV);   // accent underline
+        if (i > 0) _tft.drawFastVLine(x, 4, TAB_H - 8, CLR_OFF);
     }
     _tft.drawFastHLine(0, TAB_H, 240, CLR_OFF);
 }
 
-void Display::drawNode(int16_t x, int16_t y, int16_t w, int16_t h,
-                       const char* name, const char* value, const char* sub,
-                       uint16_t color)
+void Display::drawNodeFrame(int16_t x, int16_t y, int16_t w, int16_t h,
+                            const char* name)
 {
     _tft.fillRect(x, y, w, h, CLR_PANEL);
-    _tft.drawRect(x, y, w, h, color);
     _tft.setTextSize(1);
     _tft.setTextColor(CLR_LABEL, CLR_PANEL);
     _tft.setCursor(x + 5, y + 4);
     _tft.print(name);
+}
 
-    int16_t vw = strlen(value) * CHAR_W * 2;
-    _tft.setTextSize(2);
-    _tft.setTextColor(color, CLR_PANEL);
-    _tft.setCursor(x + (w - vw) / 2, y + 15);
-    _tft.print(value);
-
-    if (sub && sub[0]) {
-        int16_t sw = strlen(sub) * CHAR_W;
-        _tft.setTextSize(1);
-        _tft.setTextColor(CLR_LABEL, CLR_PANEL);
-        _tft.setCursor(x + (w - sw) / 2, y + h - 13);
-        _tft.print(sub);
+void Display::redrawNode(int16_t x, int16_t y, int16_t w, int16_t h,
+                         const char* name, const char* value, const char* sub,
+                         uint16_t color, NodeCache& c)
+{
+    // Frame (border colour change = full frame redraw, e.g. export→import)
+    if (!c.valid || c.color != color) {
+        _tft.drawRect(x, y - 1, w, h + 1, CLR_BG);   // erase old border
+        if (!c.valid) drawNodeFrame(x, y, w, h, name);
+        _tft.drawRect(x, y, w, h, color);
+        c.valid = true;
+        c.color = color;
+        c.value[0] = c.sub[0] = '\0';                // force text repaint
+    }
+    if (strcmp(c.value, value) != 0) {
+        int16_t ox = x + (w - strlen(c.value) * CHAR_W * 2) / 2;
+        int16_t nx = x + (w - strlen(value)    * CHAR_W * 2) / 2;
+        printOver(ox, nx, y + 15, 2, color, CLR_PANEL, c.value, value);
+        strncpy(c.value, value, sizeof(c.value) - 1);
+        c.value[sizeof(c.value) - 1] = '\0';
+    }
+    if (strcmp(c.sub, sub) != 0) {
+        int16_t ox = x + (w - strlen(c.sub) * CHAR_W) / 2;
+        int16_t nx = x + (w - strlen(sub)    * CHAR_W) / 2;
+        printOver(ox, nx, y + h - 13, 1, CLR_LABEL, CLR_PANEL, c.sub, sub);
+        strncpy(c.sub, sub, sizeof(c.sub) - 1);
+        c.sub[sizeof(c.sub) - 1] = '\0';
     }
 }
 
-void Display::drawArrow(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
-                        uint16_t color, const char* label)
+void Display::drawArrowLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
+                            uint16_t color)
 {
     _tft.drawLine(x0, y0, x1, y1, color);
     float dx = x1 - x0, dy = y1 - y0;
     float len = sqrtf(dx * dx + dy * dy);
     if (len < 1) len = 1;
     float ux = dx / len, uy = dy / len;
-    // Arrowhead
     int16_t hx1 = x1 - (int16_t)(12 * ux + 6 * uy);
     int16_t hy1 = y1 - (int16_t)(12 * uy - 6 * ux);
     int16_t hx2 = x1 - (int16_t)(12 * ux - 6 * uy);
     int16_t hy2 = y1 - (int16_t)(12 * uy + 6 * ux);
     _tft.drawLine(x1, y1, hx1, hy1, color);
     _tft.drawLine(x1, y1, hx2, hy2, color);
-    // Label beside the midpoint (perpendicular offset)
-    int16_t mx = (x0 + x1) / 2 - (int16_t)(12 * uy);
-    int16_t my = (y0 + y1) / 2 + (int16_t)(12 * ux) - 4;
-    _tft.setTextSize(1);
-    _tft.setTextColor(color, CLR_BG);
-    _tft.setCursor(mx, my);
-    _tft.print(label);
+}
+
+void Display::redrawArrow(const ArrowDef& d, bool forward, uint16_t color,
+                          const char* label, ArrowCache& c)
+{
+    if (c.drawn && c.dir == forward && strcmp(c.label, label) == 0) return;
+
+    if (c.drawn) {   // erase old: same pixels in background colour
+        drawArrowLine(c.dir ? d.fx : d.tx, c.dir ? d.fy : d.ty,
+                      c.dir ? d.tx : d.fx, c.dir ? d.ty : d.fy, CLR_BG);
+        _tft.setTextSize(1);
+        _tft.setTextColor(CLR_BG, CLR_BG);
+        _tft.setCursor(d.lx, d.ly);
+        _tft.print(c.label);
+    }
+
+    if (label[0] != '\0') {
+        drawArrowLine(forward ? d.fx : d.tx, forward ? d.fy : d.ty,
+                      forward ? d.tx : d.fx, forward ? d.ty : d.fy, color);
+        _tft.setTextSize(1);
+        _tft.setTextColor(color, CLR_BG);
+        _tft.setCursor(d.lx, d.ly);
+        _tft.print(label);
+        c.dir   = forward;
+        strncpy(c.label, label, sizeof(c.label) - 1);
+        c.label[sizeof(c.label) - 1] = '\0';
+        c.drawn = true;
+    } else {
+        c.drawn = false;
+    }
 }
 
 void Display::setTab(Tab t) {
     if (_tab == t) return;
     _tab = t;
     _needFullDraw = true;
+}
+
+void Display::invalidateCaches() {
+    _ndSolar.valid = _ndGrid.valid = _ndBatt.valid = _ndHome.valid = false;
+    _arPv.drawn = _arGrid.drawn = _arBatt.drawn = false;
+    _btnValid = false;
+    _sysValid = false;
+    for (auto& l : _sysCache) l[0] = '\0';
+    _dotsValid = false;
+    _logValid  = false;
 }
 
 // ── Top-level update ───────────────────────────────────────────
@@ -173,6 +237,7 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
     _lastRedraw = now;
 
     if (_needFullDraw) {
+        invalidateCaches();
         _tft.fillScreen(CLR_BG);
         drawTabBar();
         _needFullDraw = false;
@@ -183,126 +248,128 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
 }
 
 // ── FLOW tab ───────────────────────────────────────────────────
-static void fmtW(char* buf, size_t n, int32_t w) {
-    snprintf(buf, n, "%ld W", (long)w);
-}
-
-void Display::drawSaverButton(const BatterySaver& bs, const ModeController& ctrl) {
-    bool active = bs.isActive();
-    uint16_t bg  = active ? 0x03E0 : 0x4000;   // dark green / dark red
-    uint16_t fg  = active ? ILI9341_WHITE : 0xBDF7;
-    _tft.fillRect(BTN_X, BTN_Y, BTN_W, BTN_H, bg);
-    _tft.drawRect(BTN_X, BTN_Y, BTN_W, BTN_H, active ? CLR_ACTIVE : CLR_IMPORT);
-
-    _tft.setTextSize(2);
-    _tft.setTextColor(fg, bg);
-    const char* label = active ? "BATT SAVE  ON" : "BATT SAVE OFF";
-    int16_t tw = strlen(label) * CHAR_W * 2;
-    _tft.setCursor(BTN_X + (BTN_W - tw) / 2, BTN_Y + 7);
-    _tft.print(label);
-
-    char sub[32];
-    if (active) snprintf(sub, sizeof(sub), "Target: %ld W", (long)bs.targetPower());
-    else        snprintf(sub, sizeof(sub), "Mode: %s", ctrl.currentMode());
-    _tft.setTextSize(1);
-    _tft.setTextColor(CLR_TARGET, bg);
-    int16_t sw = strlen(sub) * CHAR_W;
-    _tft.setCursor(BTN_X + (BTN_W - sw) / 2, BTN_Y + 29);
-    _tft.print(sub);
-}
-
 void Display::updateFlow(const InverterData& inv, const BatterySaver& bs,
                          const ModeController& ctrl)
 {
-    char v[24], s[24];
+    char v[24], s[32];
 
-    // Solar
-    fmtW(v, sizeof(v), inv.pvPower);
+    // Solar node
+    snprintf(v, sizeof(v), "%ld W", (long)inv.pvPower);
     snprintf(s, sizeof(s), "today %.1f kWh", (double)inv.todayGeneration);
-    drawNode(ND_SOLAR_X, ND_SOLAR_Y, ND_W, ND_H, " Solar", v, s, CLR_PV);
+    redrawNode(ND_SOLAR_X, ND_SOLAR_Y, ND_W, ND_H, " Solar", v, s, CLR_PV, _ndSolar);
 
-    // Grid
+    // Grid node (colour encodes export/import direction)
     uint16_t gc = inv.gridPower >= 0 ? CLR_EXPORT : CLR_IMPORT;
-    char gw[24];
-    if (inv.gridPower >= 0) snprintf(gw, sizeof(gw), "%ld W", (long)inv.gridPower);
-    else                    snprintf(gw, sizeof(gw), "%ld W", (long)-inv.gridPower);
+    snprintf(v, sizeof(v), "%ld W", (long)(inv.gridPower >= 0 ? inv.gridPower : -inv.gridPower));
     snprintf(s, sizeof(s), "exp %.1f imp %.1f",
              (double)inv.todayExport, (double)inv.todayImport);
-    drawNode(ND_GRID_X, ND_SIDE_Y, ND_SIDE_W, ND_H, " Grid", gw, s, gc);
+    redrawNode(ND_GRID_X, ND_SIDE_Y, ND_SIDE_W, ND_H, " Grid", v, s, gc, _ndGrid);
 
-    // Battery (1+2 combined)
+    // Battery node
     uint16_t bc = inv.batteryPower >= 0 ? CLR_CHARGE : CLR_DISCHG;
-    fmtW(v, sizeof(v), inv.batteryPower >= 0 ? inv.batteryPower : -inv.batteryPower);
-    snprintf(s, sizeof(s), "SOC %u%%  +%.1f kWh",
+    snprintf(v, sizeof(v), "%ld W", (long)(inv.batteryPower >= 0 ? inv.batteryPower : -inv.batteryPower));
+    snprintf(s, sizeof(s), "SOC %u%% +%.1f kWh",
              (unsigned)inv.batterySOC, (double)inv.todayCharged);
-    drawNode(ND_BATT_X, ND_SIDE_Y, ND_SIDE_W, ND_H, " Battery", v, s, bc);
+    redrawNode(ND_BATT_X, ND_SIDE_Y, ND_SIDE_W, ND_H, " Battery", v, s, bc, _ndBatt);
 
-    // Home
-    fmtW(v, sizeof(v), inv.loadPower);
+    // Home node
+    snprintf(v, sizeof(v), "%ld W", (long)inv.loadPower);
     snprintf(s, sizeof(s), "use %.1f kWh", (double)inv.todayConsumption);
-    drawNode(ND_HOME_X, ND_HOME_Y, ND_W, ND_H, " Home", v, s, ILI9341_WHITE);
+    redrawNode(ND_HOME_X, ND_HOME_Y, ND_W, ND_H, " Home", v, s, ILI9341_WHITE, _ndHome);
 
-    // Arrows
-    char lb[16];
-    snprintf(lb, sizeof(lb), "%ldW", (long)inv.pvPower);
-    if (inv.pvPower > 0)
-        drawArrow(ND_SOLAR_X + ND_W / 2, ND_SOLAR_Y + ND_H,
-                  ND_HOME_X + ND_W / 2, ND_HOME_Y, CLR_PV, lb);
+    // Arrows (endpoints given in "forward" direction; label pos pre-laid-out)
+    static const ArrowDef AR_PV   = { 120,  88, 120, 208,  96, 140 };
+    static const ArrowDef AR_GRID = {  90, 208,  60, 176,  82, 183 };
+    static const ArrowDef AR_BATT = { 150, 208, 180, 176, 173, 201 };
 
-    snprintf(lb, sizeof(lb), "%ldW", (long)(inv.gridPower >= 0 ? inv.gridPower : -inv.gridPower));
-    if (inv.gridPower >= 0)
-        drawArrow(ND_HOME_X + 30, ND_HOME_Y, ND_GRID_X + 52, ND_SIDE_Y + ND_H, CLR_EXPORT, lb);
-    else
-        drawArrow(ND_GRID_X + 52, ND_SIDE_Y + ND_H, ND_HOME_X + 30, ND_HOME_Y, CLR_IMPORT, lb);
+    char lb[12];
+    if (inv.pvPower > 0) snprintf(lb, sizeof(lb), "%ldW", (long)inv.pvPower);
+    else                 lb[0] = '\0';
+    redrawArrow(AR_PV, true, CLR_PV, lb, _arPv);
 
-    snprintf(lb, sizeof(lb), "%ldW", (long)(inv.batteryPower >= 0 ? inv.batteryPower : -inv.batteryPower));
-    if (inv.batteryPower >= 0)
-        drawArrow(ND_HOME_X + ND_W - 30, ND_HOME_Y, ND_BATT_X + 52, ND_SIDE_Y + ND_H, CLR_CHARGE, lb);
-    else
-        drawArrow(ND_BATT_X + 52, ND_SIDE_Y + ND_H, ND_HOME_X + ND_W - 30, ND_HOME_Y, CLR_DISCHG, lb);
+    int32_t gw = inv.gridPower;
+    snprintf(lb, sizeof(lb), "%ldW", (long)(gw >= 0 ? gw : -gw));
+    redrawArrow(AR_GRID, gw >= 0, gw >= 0 ? CLR_EXPORT : CLR_IMPORT, lb, _arGrid);
 
-    // Saver button with current mode
-    drawSaverButton(bs, ctrl);
+    int32_t bw = inv.batteryPower;
+    snprintf(lb, sizeof(lb), "%ldW", (long)(bw >= 0 ? bw : -bw));
+    redrawArrow(AR_BATT, bw >= 0, bw >= 0 ? CLR_CHARGE : CLR_DISCHG, lb, _arBatt);
+
+    // Saver button / mode banner
+    bool active = bs.isActive();
+    char line2[36];
+    if (active) snprintf(line2, sizeof(line2), "Target: %ld W", (long)bs.targetPower());
+    else        snprintf(line2, sizeof(line2), "Mode: %s", ctrl.currentMode());
+
+    if (!_btnValid || _btnActive != active) {
+        uint16_t bg = active ? 0x03E0 : 0x4000;
+        _tft.fillRect(BTN_X, BTN_Y, BTN_W, BTN_H, bg);
+        _tft.drawRect(BTN_X, BTN_Y, BTN_W, BTN_H, active ? CLR_ACTIVE : CLR_IMPORT);
+        _btnValid = true;
+        _btnLine1[0] = _btnLine2[0] = '\0';   // force text repaint
+    }
+    uint16_t btnBg = active ? 0x03E0 : 0x4000;
+    const char* line1 = active ? "BATT SAVE  ON" : "BATT SAVE OFF";
+    uint16_t fg       = active ? ILI9341_WHITE : 0xBDF7;
+    if (strcmp(_btnLine1, line1) != 0) {
+        int16_t ox = BTN_X + (BTN_W - strlen(_btnLine1) * CHAR_W * 2) / 2;
+        int16_t nx = BTN_X + (BTN_W - strlen(line1)     * CHAR_W * 2) / 2;
+        printOver(ox, nx, BTN_Y + 7, 2, fg, btnBg, _btnLine1, line1);
+        strcpy(_btnLine1, line1);
+    }
+    if (strcmp(_btnLine2, line2) != 0) {
+        int16_t ox = BTN_X + (BTN_W - strlen(_btnLine2) * CHAR_W) / 2;
+        int16_t nx = BTN_X + (BTN_W - strlen(line2)     * CHAR_W) / 2;
+        printOver(ox, nx, BTN_Y + 29, 1, CLR_TARGET, btnBg, _btnLine2, line2);
+        strcpy(_btnLine2, line2);
+    }
 }
 
 // ── SYS tab ────────────────────────────────────────────────────
-void Display::sysLine(int16_t& y, const char* label, const char* value,
-                      uint16_t color, bool twoCol, const char* label2,
-                      const char* value2, uint16_t color2)
+void Display::sysPrint(uint8_t idx, int16_t y, const char* text)
 {
-    _tft.fillRect(0, y, 240, 10, CLR_BG);
+    if (_sysValid && strcmp(_sysCache[idx], text) == 0) return;
+    if (idx < SYS_LINES && _sysCache[idx][0]) {
+        _tft.setTextSize(1);
+        _tft.setTextColor(CLR_BG, CLR_BG);
+        _tft.setCursor(8, y);
+        _tft.print(_sysCache[idx]);
+    }
     _tft.setTextSize(1);
     _tft.setTextColor(CLR_LABEL, CLR_BG);
     _tft.setCursor(8, y);
-    _tft.print(label);
-    _tft.setTextColor(color, CLR_BG);
-    _tft.print(value);
-    if (twoCol && label2) {
-        _tft.setTextColor(CLR_LABEL, CLR_BG);
-        _tft.setCursor(124, y);
-        _tft.print(label2);
-        _tft.setTextColor(color2, CLR_BG);
-        _tft.print(value2);
+    _tft.print(text);
+    if (idx < SYS_LINES) {
+        strncpy(_sysCache[idx], text, sizeof(_sysCache[0]) - 1);
+        _sysCache[idx][sizeof(_sysCache[0]) - 1] = '\0';
     }
-    y += 12;
+    _sysValid = true;
 }
 
 void Display::drawStatusDots(bool wifiOk, bool modbusOk, bool mqttOk) {
-    int16_t y = 108;
+    uint8_t state = (wifiOk ? 1 : 0) | (modbusOk ? 2 : 0) | (mqttOk ? 4 : 0);
+    if (_dotsValid && _dotsCache == state) return;
+    _dotsValid = true;
+    _dotsCache = state;
+
+    int16_t y = 120;
     _tft.setTextSize(1);
     _tft.setTextColor(CLR_LABEL, CLR_BG);
-    _tft.fillRect(0, y, 240, 16, CLR_BG);
     _tft.setCursor(8, y + 4);
     _tft.print("Link:");
-    _tft.fillCircle(56, y + 8, 5, wifiOk ? CLR_ACTIVE : CLR_IMPORT);
-    _tft.setCursor(66, y + 4);  _tft.print("WiFi");
+    _tft.fillCircle(56,  y + 8, 5, wifiOk   ? CLR_ACTIVE : CLR_IMPORT);
+    _tft.setCursor(66, y + 4);   _tft.print("WiFi");
     _tft.fillCircle(112, y + 8, 5, modbusOk ? CLR_ACTIVE : CLR_IMPORT);
-    _tft.setCursor(122, y + 4); _tft.print("RS485");
-    _tft.fillCircle(178, y + 8, 5, mqttOk ? CLR_ACTIVE : CLR_IMPORT);
-    _tft.setCursor(188, y + 4); _tft.print("MQTT");
+    _tft.setCursor(122, y + 4);  _tft.print("RS485");
+    _tft.fillCircle(178, y + 8, 5, mqttOk   ? CLR_ACTIVE : CLR_IMPORT);
+    _tft.setCursor(188, y + 4);  _tft.print("MQTT");
 }
 
 void Display::drawLogTail(int16_t y) {
+    if (_logValid && _logSerial == appLog.serial()) return;
+    _logValid  = true;
+    _logSerial = appLog.serial();
+
     String text = appLog.text();
     int end = text.length() - 1;
     while (end >= 0 && text[end] == '\n') end--;   // trim trailing newlines
@@ -310,7 +377,7 @@ void Display::drawLogTail(int16_t y) {
     for (int i = end; i >= 0; i--) {
         if (text[i] == '\n') {
             lines++;
-            if (lines >= 7) { start = i + 1; break; }
+            if (lines >= LOG_LINES_MAX) { start = i + 1; break; }
         }
     }
     _tft.fillRect(0, y, 240, 316 - y, CLR_BG);
@@ -323,33 +390,38 @@ void Display::drawLogTail(int16_t y) {
 void Display::updateSys(const InverterData& inv, const char* sn,
                         bool wifiOk, bool modbusOk, bool mqttOk)
 {
-    char v[48], v2[24];
-    int16_t y = 36;
-
+    char v[64];
     String ip = WiFi.localIP().toString();
-    sysLine(y, "FW: ", FW_VERSION, CLR_PV, true, "IP: ", ip.c_str(), CLR_LABEL);
+    snprintf(v, sizeof(v), "FW: %s   IP: %s", FW_VERSION, ip.c_str());
+    sysPrint(0, 40, v);
 
     unsigned long up = millis() / 1000;
-    snprintf(v, sizeof(v), "%lud %02lu:%02lu", up / 86400, (up / 3600) % 24, (up / 60) % 60);
-    snprintf(v2, sizeof(v2), "%ld dBm", (long)WiFi.RSSI());
-    sysLine(y, "Up: ", v, CLR_LABEL, true, "RSSI: ", v2, CLR_LABEL);
+    snprintf(v, sizeof(v), "Up: %lud %02lu:%02lu   RSSI: %ld dBm",
+             up / 86400, (up / 3600) % 24, (up / 60) % 60, (long)WiFi.RSSI());
+    sysPrint(1, 52, v);
 
-    snprintf(v, sizeof(v), "%u/%u kB",
-             (unsigned)(heapStats.freeHeap / 1024), (unsigned)(heapStats.maxBlock / 1024));
-    snprintf(v2, sizeof(v2), "%u%%", (unsigned)heapStats.frag);
-    sysLine(y, "Heap free/blk: ", v, CLR_LABEL, true, "Frag: ", v2,
-            heapStats.frag > 40 ? CLR_IMPORT : CLR_ACTIVE);
+    snprintf(v, sizeof(v), "Heap free/blk: %u/%u kB   frag %u%%",
+             (unsigned)(heapStats.freeHeap / 1024),
+             (unsigned)(heapStats.maxBlock / 1024), (unsigned)heapStats.frag);
+    sysPrint(2, 64, v);
 
-    sysLine(y, "Inverter SN: ", sn, CLR_LABEL, false, nullptr, nullptr, 0);
+    snprintf(v, sizeof(v), "Inverter SN: %s", sn);
+    sysPrint(3, 76, v);
+
+    // Touch calibration aid (raw -> mapped of last tap)
+    snprintf(v, sizeof(v), "Touch: %s", _touchDbg[0] ? _touchDbg : "-");
+    sysPrint(4, 88, v);
 
     drawStatusDots(wifiOk, modbusOk, mqttOk);
 
-    _tft.drawFastHLine(0, 130, 240, CLR_OFF);
-    _tft.fillRect(0, 132, 240, 14, CLR_BG);
-    _tft.setTextColor(CLR_LABEL, CLR_BG);
-    _tft.setCursor(8, 136);
-    _tft.print("Log:");
-    drawLogTail(148);
+    if (!_logValid) {
+        _tft.drawFastHLine(0, 140, 240, CLR_OFF);
+        _tft.setTextSize(1);
+        _tft.setTextColor(CLR_LABEL, CLR_BG);
+        _tft.setCursor(8, 146);
+        _tft.print("Log:");
+    }
+    drawLogTail(158);
 }
 
 // ── Touch / backlight ──────────────────────────────────────────
@@ -364,8 +436,13 @@ bool Display::pollTouch() {
     if (!_screenOn) { wake(); return false; }   // first tap wakes screen
 
     TS_Point p = _ts.getPoint();
-    int16_t sx = map(p.x, TS_RAW_X_MIN, TS_RAW_X_MAX, 0, 240);
-    int16_t sy = map(p.y, TS_RAW_Y_MIN, TS_RAW_Y_MAX, 0, 320);
+    // Axes swapped + screen-Y inverted (see TS_RAW_* comment)
+    int16_t sx = map(p.y, TS_RAW_Y_MIN, TS_RAW_Y_MAX, 0, 240);
+    int16_t sy = map(p.x, TS_RAW_X_MIN, TS_RAW_X_MAX, 320, 0);
+
+    // Debug: last tap raw -> mapped, shown on the SYS tab
+    snprintf(_touchDbg, sizeof(_touchDbg), "raw %d,%d -> scr %d,%d",
+             (int)p.x, (int)p.y, (int)sx, (int)sy);
 
     if (sy >= 0 && sy < TAB_H) {           // tab bar
         setTab(sx < TAB_FLOW_X1 ? TAB_FLOW : TAB_SYS);
