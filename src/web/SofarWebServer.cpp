@@ -146,3 +146,13 @@ void SofarWebServer::begin() {
 
     _server.begin();
 }
+
+void SofarWebServer::pause() {
+    _paused = true;
+    _server.close();
+}
+
+void SofarWebServer::resume() {
+    _server.begin();
+    _paused = false;
+}

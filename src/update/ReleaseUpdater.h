@@ -18,10 +18,22 @@ public:
     void     setCheckIntervalS(uint32_t s);
     uint32_t checkIntervalS() const { return _checkIntervalMs / 1000; }
 
+    bool hasPendingFlash() const;
+    void maybeFlashPending();
+
+    using HeapHook = void (*)();
+    void setHeapHooks(HeapHook teardown, HeapHook resume) {
+        _teardownHook = teardown;
+        _resumeHook   = resume;
+    }
+
 private:
     unsigned long _nextCheckAt     = FIRST_CHECK_DELAY_MS;
     uint32_t      _checkIntervalMs = OTA_CHECK_INTERVAL_S * 1000UL;
     bool          _busy            = false;
+    HeapHook      _teardownHook    = nullptr;
+    HeapHook      _resumeHook      = nullptr;
+    bool          _teardownUsed    = false;
 
     // Repo that publishes release binaries ("owner/name")
     static constexpr const char* GITHUB_REPO = "vbartusevicius/sofarsolar-mqtt";

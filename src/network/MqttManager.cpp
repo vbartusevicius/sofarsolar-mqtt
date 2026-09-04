@@ -54,7 +54,13 @@ void MqttManager::begin() {
     connect();
 }
 
+void MqttManager::pause() {
+    _paused = true;
+    if (_mqtt.connected()) _mqtt.disconnect();
+}
+
 void MqttManager::connect() {
+    if (_paused) return;
     if (_mqtt.connected()) return;
 
     int port = atoi(_cfg.mqttPort());
@@ -135,13 +141,13 @@ void MqttManager::forceReconnect(const char* reason) {
 }
 
 void MqttManager::loop() {
-    if (!_ready) return;
+    if (!_ready || _paused) return;
     _mqtt.loop();                // cleans up state if the socket died
     if (_mqtt.connected()) checkLiveness();
 }
 
 void MqttManager::publish() {
-    if (!_ready) return;
+    if (!_ready || _paused) return;
     if (!_mqtt.connected()) {
         char lb[48];
         snprintf(lb, sizeof(lb), "Pub skip: disconnected rc=%d", _mqtt.state());

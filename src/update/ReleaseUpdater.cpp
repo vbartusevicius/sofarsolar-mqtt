@@ -10,6 +10,40 @@
 #include "util/HeapStats.h"
 #include "Version.h"
 
+#define RTC_OTA_OFFSET 96            // uint32 block offset in RTC user mem
+#define RTC_OTA_MAGIC  0x4F54414CUL  // "OTAL"
+
+namespace {
+struct RtcOtaState {
+    uint32_t magic;
+    uint32_t attempts;
+    char     tag[24];
+    uint32_t checksum;
+};
+
+uint32_t rtcChecksum(const RtcOtaState& s) {
+    uint32_t sum = s.magic ^ s.attempts;
+    for (size_t i = 0; i < sizeof(s.tag); i++) sum = sum * 33 + (uint8_t)s.tag[i];
+    return sum;
+}
+
+bool rtcRead(RtcOtaState& s) {
+    if (!ESP.rtcUserMemoryRead(RTC_OTA_OFFSET, (uint32_t*)&s, sizeof(s))) return false;
+    return s.magic == RTC_OTA_MAGIC && s.checksum == rtcChecksum(s);
+}
+
+void rtcWrite(RtcOtaState& s) {
+    s.magic    = RTC_OTA_MAGIC;
+    s.checksum = rtcChecksum(s);
+    ESP.rtcUserMemoryWrite(RTC_OTA_OFFSET, (uint32_t*)&s, sizeof(s));
+}
+
+void rtcClear() {
+    RtcOtaState s = {};           // magic = 0 → invalid
+    ESP.rtcUserMemoryWrite(RTC_OTA_OFFSET, (uint32_t*)&s, sizeof(s));
+}
+} // namespace
+
 void ReleaseUpdater::setCheckIntervalS(uint32_t s) {
     if (s < 60)     s = 60;        // no faster than once a minute
     if (s > 86400)  s = 86400;     // no slower than once a day
@@ -152,6 +186,7 @@ bool ReleaseUpdater::flashFromRelease(const String& tag) {
     if (pe >= 0) host.remove(pe);
 
     t_httpUpdate_return result;
+    _teardownUsed = false;
     {
         WiFiClientSecure client;
         client.setInsecure();
@@ -163,14 +198,29 @@ bool ReleaseUpdater::flashFromRelease(const String& tag) {
             appLog.add("OTA", "server supports MFLN (small TLS buffers)");
         } else {
             uint32_t blk = ESP.getMaxFreeBlockSize();
-            if (blk < 24 * 1024) {
-                appLog.add("OTA", "no MFLN and heap block too small for "
-                              "full TLS buffers — reboot and retry");
-                _busy = false;
-                return false;
+            if (blk < 26 * 1024) {
+                // Try to recover heap live — no reboot needed if the
+                // teardown frees enough contiguous memory.
+                if (_teardownHook) {
+                    appLog.add("OTA", "heap too small, tearing down network services");
+                    _teardownHook();
+                    _teardownUsed = true;
+                    delay(100);
+                    blk = ESP.getMaxFreeBlockSize();
+                    snprintf(hb, sizeof(hb), "OTA: post-teardown max-block=%u", (unsigned)blk);
+                    appLog.add("OTA", hb);
+                }
+                if (blk < 26 * 1024) {
+                    appLog.add("OTA", "still too small — rebooting to flash clean");
+                    RtcOtaState st = {};
+                    st.attempts = 0;
+                    strncpy(st.tag, tag.c_str(), sizeof(st.tag) - 1);
+                    rtcWrite(st);
+                    _busy = false;
+                    delay(200);
+                    ESP.restart();
+                }
             }
-            // default buffers (16384/512) — the download needs ~22 KB
-            // contiguous for the BearSSL context
             appLog.add("OTA", "no MFLN, using full TLS buffers");
         }
 
@@ -190,6 +240,7 @@ bool ReleaseUpdater::flashFromRelease(const String& tag) {
                  httpUpdate.getLastError(),
                  httpUpdate.getLastErrorString().c_str());
         appLog.add("OTA", lb);
+        if (_teardownUsed && _resumeHook) _resumeHook();
         return false;
     }
 
@@ -197,4 +248,30 @@ bool ReleaseUpdater::flashFromRelease(const String& tag) {
     delay(500);
     ESP.restart();
     return true;
+}
+
+// ── Pending boot-time flash ────────────────────────────────────
+bool ReleaseUpdater::hasPendingFlash() const {
+    RtcOtaState st;
+    return rtcRead(st);
+}
+
+void ReleaseUpdater::maybeFlashPending() {
+    RtcOtaState st;
+    if (!rtcRead(st)) return;
+
+    if (st.attempts >= 1) {
+        rtcClear();
+        appLog.add("OTA", "pending flash done/aborted, normal boot");
+        return;
+    }
+
+    appLog.add("OTA", "pending flash: boot-time update starting");
+    st.attempts++;
+    rtcWrite(st);
+
+    String tag(st.tag);
+    flashFromRelease(tag);
+
+    rtcClear();
 }
