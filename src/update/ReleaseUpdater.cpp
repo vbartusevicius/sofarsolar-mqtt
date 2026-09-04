@@ -140,13 +140,39 @@ bool ReleaseUpdater::flashFromRelease(const String& tag) {
     }
     appLog.add("OTA", "redirect resolved, downloading...");
 
-    // Step 2: fresh client, direct download, no further redirects
+    // Step 2: fresh client, direct download, no further redirects.
+    // TLS buffer policy: small buffers are only legal if the server honours
+    // MFLN (RFC6066).  GitHub's asset CDN may not — a full-size TLS record
+    // into a small BearSSL buffer kills the connection mid-transfer
+    // (error -5).  Probe first; fall back to full buffers if heap allows.
+    String host = downloadUrl;
+    int hs = host.indexOf("://");
+    if (hs >= 0) host.remove(0, hs + 3);
+    int pe = host.indexOf('/');
+    if (pe >= 0) host.remove(pe);
+
     t_httpUpdate_return result;
     {
         WiFiClientSecure client;
         client.setInsecure();
-        client.setBufferSizes(1024, 512);
         client.setTimeout(30000);           // slow TLS + 500 kB payload
+
+        bool mfln = client.probeMaxFragmentLength(host.c_str(), 443, 1024);
+        if (mfln) {
+            client.setBufferSizes(1024, 512);
+            appLog.add("OTA", "server supports MFLN (small TLS buffers)");
+        } else {
+            uint32_t blk = ESP.getMaxFreeBlockSize();
+            if (blk < 24 * 1024) {
+                appLog.add("OTA", "no MFLN and heap block too small for "
+                              "full TLS buffers — reboot and retry");
+                _busy = false;
+                return false;
+            }
+            // default buffers (16384/512) — the download needs ~22 KB
+            // contiguous for the BearSSL context
+            appLog.add("OTA", "no MFLN, using full TLS buffers");
+        }
 
         ESP8266HTTPUpdate httpUpdate;
         httpUpdate.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
