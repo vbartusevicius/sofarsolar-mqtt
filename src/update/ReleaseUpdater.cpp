@@ -14,39 +14,71 @@
 #define RTC_OTA_MAGIC  0x4F54414CUL
 
 namespace {
+// Progress breadcrumbs survive the install reboot, so a failed attempt can
+// still be explained afterwards (the RAM log is wiped by the restart).
+enum : uint16_t {
+    ST_NONE = 0, ST_PARKED, ST_BOOT_START, ST_WIFI_FAIL,
+    ST_REDIRECT_FAIL, ST_DOWNLOADING, ST_FLASH_FAIL, ST_DONE, ST_GAVE_UP
+};
+
+const char* stageName(uint16_t s) {
+    switch (s) {
+        case ST_PARKED:        return "parked, awaiting reboot";
+        case ST_BOOT_START:    return "boot flash started";
+        case ST_WIFI_FAIL:     return "no WiFi at boot";
+        case ST_REDIRECT_FAIL: return "asset URL not resolved";
+        case ST_DOWNLOADING:   return "download/flash in progress";
+        case ST_FLASH_FAIL:    return "download/flash failed";
+        case ST_DONE:          return "installed OK";
+        case ST_GAVE_UP:       return "gave up after one attempt";
+        default:               return "none";
+    }
+}
+
 struct RtcOtaState {
     uint32_t magic;
-    uint32_t attempts;
+    uint8_t  pending;
+    uint8_t  attempts;
+    uint16_t stage;
+    int32_t  err;
+    uint32_t freeHeap;
+    uint32_t maxBlock;
     char     tag[24];
     uint32_t checksum;
 };
+// system_rtc_mem_* requires a size that is a multiple of 4 bytes
+static_assert(sizeof(RtcOtaState) % 4 == 0, "RTC state must be 4-byte sized");
 
 uint32_t rtcChecksum(const RtcOtaState& s) {
-    uint32_t sum = s.magic ^ (s.attempts * 2654435761UL);
+    uint32_t sum = s.magic ^ (s.pending * 31u) ^ (s.attempts * 131u)
+                 ^ (s.stage * 7919u) ^ (uint32_t)s.err
+                 ^ s.freeHeap ^ s.maxBlock;
     for (size_t i = 0; i < sizeof(s.tag); i++) sum = sum * 33 + (uint8_t)s.tag[i];
     return sum;
 }
 
 bool rtcRead(RtcOtaState& s) {
-    if (!ESP.rtcUserMemoryRead(RTC_OTA_OFFSET, (uint32_t*)&s, sizeof(s) / 4)) return false;
+    // NOTE: size is in BYTES (offset is in 4-byte blocks)
+    if (!ESP.rtcUserMemoryRead(RTC_OTA_OFFSET, (uint32_t*)&s, sizeof(s))) return false;
     return s.magic == RTC_OTA_MAGIC && s.checksum == rtcChecksum(s);
 }
 
 void rtcWrite(RtcOtaState& s) {
     s.magic    = RTC_OTA_MAGIC;
     s.checksum = rtcChecksum(s);
-    ESP.rtcUserMemoryWrite(RTC_OTA_OFFSET, (uint32_t*)&s, sizeof(s) / 4);
+    ESP.rtcUserMemoryWrite(RTC_OTA_OFFSET, (uint32_t*)&s, sizeof(s));
 }
 
-void rtcClear() {
-    RtcOtaState s = {};
-    ESP.rtcUserMemoryWrite(RTC_OTA_OFFSET, (uint32_t*)&s, sizeof(s) / 4);
-}
+void rtcTrace(RtcOtaState& s, uint16_t stage, int32_t err = 0) {
+    s.stage    = stage;
+    s.err      = err;
+    s.freeHeap = ESP.getFreeHeap();
+    s.maxBlock = ESP.getMaxFreeBlockSize();
+    rtcWrite(s);
 
-void logHeap(const char* stage) {
-    char lb[72];
-    snprintf(lb, sizeof(lb), "%s free=%u max-block=%u",
-             stage, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxFreeBlockSize());
+    char lb[96];
+    snprintf(lb, sizeof(lb), "%s (err=%ld free=%u blk=%u)", stageName(stage),
+             (long)err, (unsigned)s.freeHeap, (unsigned)s.maxBlock);
     appLog.add("OTA", lb);
 }
 } // namespace
@@ -59,38 +91,56 @@ void ReleaseUpdater::setCheckIntervalS(uint32_t s) {
 
 void ReleaseUpdater::flashPendingAtBoot() {
     RtcOtaState st;
-    if (!rtcRead(st)) return;
+    if (!rtcRead(st) || !st.pending) return;
+
+    String tag(st.tag);
+    char lb[72];
+    snprintf(lb, sizeof(lb), "installing %s (current %s)", tag.c_str(), FW_VERSION);
+    appLog.add("OTA", lb);
 
     // One attempt per parked release: a second boot with the flag still set
-    // means the flash failed, so drop it and boot normally.
+    // means the flash died mid-way, so stop trying.
     if (st.attempts >= 1) {
-        rtcClear();
-        appLog.add("OTA", "parked flash failed previously, ignoring");
+        st.pending = 0;
+        rtcTrace(st, ST_GAVE_UP);
         return;
     }
     st.attempts = 1;
-    rtcWrite(st);
-
-    String tag(st.tag);
-    char lb[64];
-    snprintf(lb, sizeof(lb), "boot flash of %s starting", tag.c_str());
-    appLog.add("OTA", lb);
-    logHeap("boot:");
+    rtcTrace(st, ST_BOOT_START);
 
     if (!connectStoredWiFi(30000)) {
-        appLog.add("OTA", "boot flash: no WiFi, aborting");
-        rtcClear();
+        st.pending = 0;
+        rtcTrace(st, ST_WIFI_FAIL);
         return;
     }
 
     String url;
-    if (resolveAssetUrl(tag, url) && downloadAndFlash(url)) {
-        rtcClear();
-        appLog.add("OTA", "flash OK, restarting");
+    if (!resolveAssetUrl(tag, url)) {
+        st.pending = 0;
+        rtcTrace(st, ST_REDIRECT_FAIL);
+        return;
+    }
+
+    rtcTrace(st, ST_DOWNLOADING);
+    if (downloadAndFlash(url)) {
+        st.pending = 0;
+        rtcTrace(st, ST_DONE);
         delay(200);
         ESP.restart();
     }
-    rtcClear();   // failed — boot normally, next check retries
+    st.pending = 0;
+    rtcTrace(st, ST_FLASH_FAIL, _lastError);
+}
+
+// Emitted once per boot so the web log always shows the previous outcome
+void ReleaseUpdater::logLastAttempt() {
+    RtcOtaState st;
+    if (!rtcRead(st) || st.stage == ST_NONE) return;
+    char lb[120];
+    snprintf(lb, sizeof(lb), "last attempt: %s [%s] err=%ld free=%u blk=%u",
+             st.tag, stageName(st.stage), (long)st.err,
+             (unsigned)st.freeHeap, (unsigned)st.maxBlock);
+    appLog.add("OTA", lb);
 }
 
 bool ReleaseUpdater::connectStoredWiFi(uint32_t timeoutMs) {
@@ -133,13 +183,14 @@ String ReleaseUpdater::checkForUpdates() {
     // Park the tag and reboot: the flash needs a clean heap (see header).
     RtcOtaState st = {};
     strncpy(st.tag, tag.c_str(), sizeof(st.tag) - 1);
+    st.pending  = 1;
     st.attempts = 0;
-    rtcWrite(st);
 
     char lb[80];
     snprintf(lb, sizeof(lb), "new release %s (current %s), rebooting to install",
              tag.c_str(), FW_VERSION);
     appLog.add("OTA", lb);
+    rtcTrace(st, ST_PARKED);
     delay(300);
     ESP.restart();
     return tag;
@@ -231,12 +282,11 @@ bool ReleaseUpdater::resolveAssetUrl(const String& tag, String& urlOut) {
 }
 
 bool ReleaseUpdater::downloadAndFlash(const String& url) {
-    logHeap("pre-flash:");
-
     // Default BearSSL buffers (16 KB recv): the asset CDN does not offer
     // MFLN, so a smaller receive buffer would be overrun mid-transfer.
     std::unique_ptr<WiFiClientSecure> client(new WiFiClientSecure);
     if (!client) {
+        _lastError = -100;
         appLog.add("OTA", "flash: client alloc failed");
         return false;
     }
@@ -247,12 +297,12 @@ bool ReleaseUpdater::downloadAndFlash(const String& url) {
     ESPhttpUpdate.rebootOnUpdate(false);
     ESPhttpUpdate.closeConnectionsOnUpdate(true);
 
-    appLog.add("OTA", "downloading firmware...");
     t_httpUpdate_return result = ESPhttpUpdate.update(*client, url, FW_VERSION);
     if (result == HTTP_UPDATE_OK) return true;
 
-    char lb[96];
-    snprintf(lb, sizeof(lb), "flash failed %d: %s", ESPhttpUpdate.getLastError(),
+    _lastError = ESPhttpUpdate.getLastError();
+    char lb[112];
+    snprintf(lb, sizeof(lb), "flash failed %ld: %s", (long)_lastError,
              ESPhttpUpdate.getLastErrorString().c_str());
     appLog.add("OTA", lb);
     return false;

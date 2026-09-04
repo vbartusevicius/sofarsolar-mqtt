@@ -16,6 +16,7 @@ public:
     static constexpr unsigned long FIRST_CHECK_DELAY_MS = 120000;
 
     void flashPendingAtBoot();
+    void logLastAttempt();
 
     void run();
     String checkNow();
@@ -26,6 +27,7 @@ public:
 private:
     unsigned long _nextCheckAt     = FIRST_CHECK_DELAY_MS;
     uint32_t      _checkIntervalMs = OTA_CHECK_INTERVAL_S * 1000UL;
+    int32_t       _lastError       = 0;
 
     static constexpr const char* GITHUB_REPO = "vbartusevicius/sofarsolar-mqtt";
 

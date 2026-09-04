@@ -64,6 +64,7 @@ void setup() {
     ArduinoOTA.begin();
     webServer.begin();
     MDNS.begin(eeConfig.name());
+    updater.logLastAttempt();
 
     taskManager.scheduleFixedRate(INTERVAL_SENSORS,    []() { inverter.readSensors(); });
     taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() { bsave.update(); });
