@@ -34,6 +34,7 @@ private:
     HeapHook      _teardownHook    = nullptr;
     HeapHook      _resumeHook      = nullptr;
     bool          _teardownUsed    = false;
+    String        _failedTag;          // release tag that failed to flash
 
     // Repo that publishes release binaries ("owner/name")
     static constexpr const char* GITHUB_REPO = "vbartusevicius/sofarsolar-mqtt";

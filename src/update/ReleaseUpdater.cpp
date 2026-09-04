@@ -69,6 +69,9 @@ String ReleaseUpdater::checkForUpdates() {
     String tag;
     if (!fetchLatestTag(tag)) return "check failed";
 
+    if (tag == _failedTag)                    // already tried and failed — don’t
+        return "check skipped";               // schedule another flash cycle
+
     if (tag == FW_VERSION) {
         char lb[64];
         snprintf(lb, sizeof(lb), "OTA: up to date (%s)", FW_VERSION);
@@ -211,11 +214,24 @@ bool ReleaseUpdater::flashFromRelease(const String& tag) {
                     appLog.add("OTA", hb);
                 }
                 if (blk < 26 * 1024) {
-                    appLog.add("OTA", "still too small — rebooting to flash clean");
                     RtcOtaState st = {};
-                    st.attempts = 0;
-                    strncpy(st.tag, tag.c_str(), sizeof(st.tag) - 1);
-                    rtcWrite(st);
+                    bool pending = rtcRead(st);
+                    if (pending && st.attempts >= 1) {
+                        // Boot-time flash failed once already for this tag —
+                        // never boot-loop on a release.
+                        appLog.add("OTA", "boot flash failed again, giving up on this release");
+                        rtcClear();
+                        _failedTag = tag;
+                        _busy = false;
+                        if (_teardownUsed && _resumeHook) _resumeHook();
+                        return false;
+                    }
+                    if (!pending) {          // keep attempts from the boot path
+                        st.attempts = 0;
+                        strncpy(st.tag, tag.c_str(), sizeof(st.tag) - 1);
+                        rtcWrite(st);
+                    }
+                    appLog.add("OTA", "still too small — rebooting to flash clean");
                     _busy = false;
                     delay(200);
                     ESP.restart();
@@ -274,4 +290,5 @@ void ReleaseUpdater::maybeFlashPending() {
     flashFromRelease(tag);
 
     rtcClear();
+    _failedTag = tag;        // don’t let the next runtime check re-arm it
 }
