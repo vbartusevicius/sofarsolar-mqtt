@@ -1,5 +1,6 @@
 #include "Display.h"
 #include <ESP8266WiFi.h>
+#include <Fonts/Picopixel.h>
 #include "Config.h"
 #include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
@@ -42,6 +43,8 @@
 #define BTN_Y         266
 #define BTN_H          40
 #define HINT_Y        311
+#define LOG_ROW_H       7   // Picopixel yAdvance
+#define LOG_BASELINE    5   // glyph height above the baseline
 #define BTN_X           8
 #define BTN_W         224
 
@@ -197,34 +200,21 @@ void Display::drawArrowLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
     _tft.drawLine(x1, y1, hx2, hy2, color);
 }
 
-void Display::redrawArrow(const ArrowDef& d, bool forward, uint16_t color,
-                          const char* label, ArrowCache& c)
+void Display::redrawArrow(const ArrowDef& d, bool visible, bool forward,
+                          uint16_t color, ArrowCache& c)
 {
-    if (c.drawn && c.dir == forward && strcmp(c.label, label) == 0) return;
+    if (c.drawn == visible && c.dir == forward && c.color == color) return;
 
-    if (c.drawn) {   // erase old: same pixels in background colour
+    if (c.drawn)     // erase old: same pixels in background colour
         drawArrowLine(c.dir ? d.fx : d.tx, c.dir ? d.fy : d.ty,
                       c.dir ? d.tx : d.fx, c.dir ? d.ty : d.fy, CLR_BG);
-        _tft.setTextSize(1);
-        _tft.setTextColor(CLR_BG, CLR_BG);
-        _tft.setCursor(d.lx, d.ly);
-        _tft.print(c.label);
-    }
-
-    if (label[0] != '\0') {
+    if (visible)
         drawArrowLine(forward ? d.fx : d.tx, forward ? d.fy : d.ty,
                       forward ? d.tx : d.fx, forward ? d.ty : d.fy, color);
-        _tft.setTextSize(1);
-        _tft.setTextColor(color, CLR_BG);
-        _tft.setCursor(d.lx, d.ly);
-        _tft.print(label);
-        c.dir   = forward;
-        strncpy(c.label, label, sizeof(c.label) - 1);
-        c.label[sizeof(c.label) - 1] = '\0';
-        c.drawn = true;
-    } else {
-        c.drawn = false;
-    }
+
+    c.drawn = visible;
+    c.dir   = forward;
+    c.color = color;
 }
 
 void Display::setTab(Tab t) {
@@ -297,23 +287,20 @@ void Display::updateFlow(const InverterData& inv, const BatterySaver& bs,
     snprintf(s, sizeof(s), "use %.1f kWh", (double)inv.todayConsumption);
     redrawNode(ND_HOME_X, ND_HOME_Y, ND_W, ND_H, " Home", v, s, ILI9341_WHITE, _ndHome);
 
-    // Arrows (endpoints given in "forward" direction; label pos pre-laid-out)
-    static const ArrowDef AR_PV   = { 120,  88, 120, 208, 126,  94 };
-    static const ArrowDef AR_GRID = {  90, 208,  60, 176,  82, 183 };
-    static const ArrowDef AR_BATT = { 150, 208, 180, 176, 173, 201 };
+    // Arrows carry direction and colour only; no arrow means no flow
+    static const ArrowDef AR_PV   = { 120,  88, 120, 208 };
+    static const ArrowDef AR_GRID = {  90, 208,  60, 176 };
+    static const ArrowDef AR_BATT = { 150, 208, 180, 176 };
 
-    char lb[12];
-    if (inv.pvPower > 0) snprintf(lb, sizeof(lb), "%ldW", (long)inv.pvPower);
-    else                 lb[0] = '\0';
-    redrawArrow(AR_PV, true, CLR_PV, lb, _arPv);
+    redrawArrow(AR_PV, inv.pvPower > 0, true, CLR_PV, _arPv);
 
     int32_t gw = inv.gridPower;
-    snprintf(lb, sizeof(lb), "%ldW", (long)(gw >= 0 ? gw : -gw));
-    redrawArrow(AR_GRID, gw >= 0, gw >= 0 ? CLR_EXPORT : CLR_IMPORT, lb, _arGrid);
+    redrawArrow(AR_GRID, gw != 0, gw >= 0, gw >= 0 ? CLR_EXPORT : CLR_IMPORT,
+                _arGrid);
 
     int32_t bw = inv.batteryPower;
-    snprintf(lb, sizeof(lb), "%ldW", (long)(bw >= 0 ? bw : -bw));
-    redrawArrow(AR_BATT, bw >= 0, bw >= 0 ? CLR_CHARGE : CLR_DISCHG, lb, _arBatt);
+    redrawArrow(AR_BATT, bw != 0, bw >= 0, bw >= 0 ? CLR_CHARGE : CLR_DISCHG,
+                _arBatt);
 
     bool active = bs.isActive();
     char line2[36];
@@ -390,21 +377,39 @@ void Display::drawLogTail(int16_t y) {
     _logValid  = true;
     _logSerial = appLog.serial();
 
+    // Rows are capped to the space above the hint line, and wrapping is
+    // disabled: print()ing the whole blob let long entries wrap onto extra
+    // rows, which is what pushed the log over the footer.
+    const int16_t rowH   = LOG_ROW_H;
+    const int16_t maxRow = (HINT_Y - 4 - y) / rowH;
+
     String text = appLog.text();
     int end = text.length() - 1;
     while (end >= 0 && text[end] == '\n') end--;   // trim trailing newlines
     int start = 0, lines = 0;
     for (int i = end; i >= 0; i--) {
-        if (text[i] == '\n') {
-            lines++;
-            if (lines >= LOG_LINES_MAX) { start = i + 1; break; }
-        }
+        if (text[i] != '\n') continue;
+        if (++lines >= maxRow) { start = i + 1; break; }
     }
-    _tft.fillRect(0, y, 240, HINT_Y - 4 - y, CLR_BG);
+
+    _tft.fillRect(0, y, 240, maxRow * rowH, CLR_BG);
+    _tft.setFont(&Picopixel);          // 3x5: ~2x the log in the same space
     _tft.setTextSize(1);
+    _tft.setTextWrap(false);
     _tft.setTextColor(CLR_LABEL, CLR_BG);
-    _tft.setCursor(8, y);
-    if (start < end) _tft.print(text.substring(start, end + 1));
+
+    int16_t row = 0;
+    int i = start;
+    while (i <= end && row < maxRow) {
+        int nl = text.indexOf('\n', i);
+        if (nl < 0 || nl > end) nl = end + 1;
+        _tft.setCursor(6, y + row * rowH + LOG_BASELINE);   // custom font: y is baseline
+        _tft.print(text.substring(i, nl));
+        i = nl + 1;
+        row++;
+    }
+    _tft.setFont();                    // back to the classic 6x8 font
+    _tft.setTextWrap(true);
 }
 
 void Display::updateSys(const InverterData& inv, const char* sn,

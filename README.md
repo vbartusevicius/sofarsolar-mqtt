@@ -12,7 +12,7 @@ Forked from [Sofar2mqtt](https://github.com/IgorYbema/Sofar2mqtt) and rewritten 
 - **MQTT** state publishing as a single JSON payload with configurable interval
 - **Home Assistant** auto-discovery for ~45 sensors + a battery-saver switch
 - **Battery Saver** mode — charges from excess solar, prevents grid discharge
-- **ILI9341 TFT** with tabbed UI: live power-flow diagram (PV ⇄ Home ⇄ Grid/Battery arrows) + a system tab (version, IP, RSSI, heap, log tail), with a self-calibrating touch layer
+- **ILI9341 TFT** with tabbed UI: live power-flow diagram (PV ⇄ Home ⇄ Grid/Battery, arrows show direction, boxes show values) + a system tab (version, IP, RSSI, heap, log tail), with a self-calibrating touch layer
 - **Web dashboard** at `http://<device-ip>/` with live data, settings, and battery-saver control
 - **WiFiManager** captive portal for first-time WiFi + MQTT setup
 - **ArduinoOTA** for over-the-air firmware updates

@@ -67,10 +67,10 @@ private:
 
     // Repaint only changed content — full redraws roll visibly over SPI
     struct NodeCache { char value[20] = ""; char sub[28] = ""; uint16_t color = 0; bool valid = false; };
-    struct ArrowCache { char label[12] = ""; bool dir = false; bool drawn = false; };
-    struct ArrowDef { int16_t fx, fy, tx, ty, lx, ly; };
+    // Arrows show direction only: the magnitude is already in the node boxes
+    struct ArrowCache { bool dir = false; bool drawn = false; uint16_t color = 0; };
+    struct ArrowDef { int16_t fx, fy, tx, ty; };
     static constexpr uint8_t SYS_LINES = 5;
-    static constexpr uint8_t LOG_LINES_MAX = 17;
 
     NodeCache  _ndSolar, _ndGrid, _ndBatt, _ndHome;
     ArrowCache _arPv, _arGrid, _arBatt;
@@ -97,8 +97,8 @@ private:
                     uint16_t color, NodeCache& c);
     void drawArrowLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
                        uint16_t color);
-    void redrawArrow(const ArrowDef& d, bool forward, uint16_t color,
-                     const char* label, ArrowCache& c);
+    void redrawArrow(const ArrowDef& d, bool visible, bool forward,
+                     uint16_t color, ArrowCache& c);
     void printOver(int16_t x0, int16_t x1, int16_t y, uint8_t size,
                    uint16_t fg, uint16_t bg, const char* prev, const char* next);
     void updateFlow(const InverterData& inv, const BatterySaver& bs,
