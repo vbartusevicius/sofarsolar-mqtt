@@ -53,6 +53,7 @@
 #define TS_LONG_MS    800
 #define TS_CAL_MS    4000   // hold this long to start touch calibration
 #define TS_MIN_TAP_MS  30
+#define TS_RELEASE_MS 250
 
 Display::Display()
     : _tft(PIN_TFT_CS, PIN_TFT_DC),
@@ -103,15 +104,19 @@ void Display::printOver(int16_t x0, int16_t x1, int16_t y, uint8_t size,
     _tft.print(next);
 }
 
-void Display::drawHint() {
-    const char* hint;
-    if (_cal.valid) hint = "tap tabs/button   hold: switch tab";
-    else            hint = _tab == TAB_FLOW ? "tap: batt save  hold: switch tab"
-                                           : "hold anywhere: switch tab";
+void Display::drawHintLine(const char* text) {
+    _tft.fillRect(0, HINT_Y, 240, 8, CLR_BG);
     _tft.setTextSize(1);
     _tft.setTextColor(CLR_OFF, CLR_BG);
-    _tft.setCursor((240 - (int16_t)strlen(hint) * CHAR_W) / 2, HINT_Y);
-    _tft.print(hint);
+    _tft.setCursor((240 - (int16_t)strlen(text) * CHAR_W) / 2, HINT_Y);
+    _tft.print(text);
+}
+
+void Display::drawHint() {
+    if (_calNotice) { drawHintLine("keep holding for calibration..."); return; }
+    if (_cal.valid) drawHintLine("tap tabs/button   hold: switch tab");
+    else drawHintLine(_tab == TAB_FLOW ? "tap: batt save  hold: switch tab"
+                                       : "hold anywhere: switch tab");
 }
 
 void Display::drawTabBar() {
@@ -293,7 +298,7 @@ void Display::updateFlow(const InverterData& inv, const BatterySaver& bs,
     redrawNode(ND_HOME_X, ND_HOME_Y, ND_W, ND_H, " Home", v, s, ILI9341_WHITE, _ndHome);
 
     // Arrows (endpoints given in "forward" direction; label pos pre-laid-out)
-    static const ArrowDef AR_PV   = { 120,  88, 120, 208,  96, 140 };
+    static const ArrowDef AR_PV   = { 120,  88, 120, 208, 126,  94 };
     static const ArrowDef AR_GRID = {  90, 208,  60, 176,  82, 183 };
     static const ArrowDef AR_BATT = { 150, 208, 180, 176, 173, 201 };
 
@@ -397,7 +402,7 @@ void Display::drawLogTail(int16_t y) {
     }
     _tft.fillRect(0, y, 240, HINT_Y - 4 - y, CLR_BG);
     _tft.setTextSize(1);
-    _tft.setTextColor(CLR_OFF, CLR_BG);
+    _tft.setTextColor(CLR_LABEL, CLR_BG);
     _tft.setCursor(8, y);
     if (start < end) _tft.print(text.substring(start, end + 1));
 }
@@ -407,24 +412,23 @@ void Display::updateSys(const InverterData& inv, const char* sn,
 {
     char v[64];
     String ip = WiFi.localIP().toString();
-    snprintf(v, sizeof(v), "FW: %s   IP: %s", FW_VERSION, ip.c_str());
+    snprintf(v, sizeof(v), "FW: %s", FW_VERSION);
     sysPrint(0, 40, v);
+
+    snprintf(v, sizeof(v), "IP: %s", ip.c_str());
+    sysPrint(1, 52, v);
 
     unsigned long up = millis() / 1000;
     snprintf(v, sizeof(v), "Up: %lud %02lu:%02lu   RSSI: %ld dBm",
              up / 86400, (up / 3600) % 24, (up / 60) % 60, (long)WiFi.RSSI());
-    sysPrint(1, 52, v);
+    sysPrint(2, 64, v);
 
     snprintf(v, sizeof(v), "Heap free/blk: %u/%u kB   frag %u%%",
              (unsigned)(heapStats.freeHeap / 1024),
              (unsigned)(heapStats.maxBlock / 1024), (unsigned)heapStats.frag);
-    sysPrint(2, 64, v);
-
-    snprintf(v, sizeof(v), "Inverter SN: %s", sn);
     sysPrint(3, 76, v);
 
-    snprintf(v, sizeof(v), "Touch %s: %s", _cal.valid ? "cal" : "UNCAL",
-             _touchDbg[0] ? _touchDbg : "no taps yet");
+    snprintf(v, sizeof(v), "Inverter SN: %s", sn);
     sysPrint(4, 88, v);
 
     drawStatusDots(wifiOk, modbusOk, mqttOk);
@@ -448,6 +452,7 @@ void Display::startCalibration() {
     // If the wizard was started by a long press, the finger is still down:
     // that press must not be mistaken for the first target tap.
     _calIgnorePress = _touchedPrev;
+    _calNotice      = false;
     if (!_screenOn) wake();
     appLog.add("TCH", "calibration started");
 }
@@ -538,7 +543,11 @@ bool Display::pollTouch() {
     if (now - _lastPollAt < TS_POLL_MS) return false;
     _lastPollAt = now;
 
-    bool down = _ts.touched();
+    bool contact = _ts.touched();
+    if (contact) _lastDownAt = now;
+    bool down = contact ||
+                (_touchedPrev && now - _lastDownAt < TS_RELEASE_MS);
+
     if (calibrating()) return calPollTouch(down, now);
 
     if (down) {
@@ -567,12 +576,17 @@ bool Display::pollTouch() {
             appLog.add("TCH", _tab == TAB_SYS ? "long press -> SYS"
                                               : "long press -> FLOW");
         }
+        if (!_calNotice && now - _pressStart >= TS_CAL_MS / 2) {
+            _calNotice = true;
+            drawHint();
+        }
         if (now - _pressStart >= TS_CAL_MS) startCalibration();
         return false;
     }
 
     if (!_touchedPrev) return false;
     _touchedPrev = false;                          // release
+    if (_calNotice) { _calNotice = false; drawHint(); }
     bool shortTap = !_longFired && (now - _pressStart) >= TS_MIN_TAP_MS;
     if (!shortTap) return false;
 

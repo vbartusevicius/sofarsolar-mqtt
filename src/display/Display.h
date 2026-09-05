@@ -21,19 +21,12 @@ public:
                 const ModeController& ctrl, const char* serialNumber,
                 bool wifiOk, bool modbusOk, bool mqttOk);
 
-    // true only on a tap of the saver button (tab-bar taps switch tabs)
     bool pollTouch();
-
     void handleDimming();
-
-    // Touch calibration. Without a stored calibration only gestures work
-    // (tap = saver, hold = tab); with one, the tab bar and button are tappable.
     void startCalibration();
     void setTouchCal(const TouchCal& c) { _cal = c; }
     const TouchCal& touchCal() const    { return _cal; }
     bool calibrating() const            { return _calStep < CAL_DONE; }
-    // Called once when the wizard produces a usable calibration, so the
-    // caller can persist it. Display itself knows nothing about EEPROM.
     void onCalibrated(void (*cb)(const TouchCal&)) { _calSaved = cb; }
 
 private:
@@ -55,6 +48,8 @@ private:
     char          _touchDbg[40] = "";
     unsigned long _pressStart   = 0;
     unsigned long _lastPollAt   = 0;
+    unsigned long _lastDownAt   = 0;
+    bool          _calNotice    = false;
     bool          _longFired    = false;
 
     TouchCal      _cal;
@@ -94,6 +89,7 @@ private:
     void invalidateCaches();
     void drawTabBar();
     void drawHint();
+    void drawHintLine(const char* text);
     void drawNodeFrame(int16_t x, int16_t y, int16_t w, int16_t h,
                        const char* name);
     void redrawNode(int16_t x, int16_t y, int16_t w, int16_t h,
