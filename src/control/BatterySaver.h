@@ -32,6 +32,7 @@ private:
     int32_t   _lastSentTarget = -1;
     unsigned long _lastSentAt = 0;
     unsigned long _zeroStart  = 0;
+    bool          _zeroTiming = false;   // 0 is a valid millis(), so flag it
 
     int32_t  _minDelta    = BSAVE_MIN_DELTA;
     int32_t  _maxPower    = BSAVE_MAX_POWER;

@@ -17,7 +17,6 @@ TEST_F(EEConfigTest, ErasedFlashLoadsDefaults) {
     EXPECT_STREQ(cfg.mqttPort(), "1883");
     EXPECT_EQ(cfg.bsaveDelta(),    BSAVE_MIN_DELTA);
     EXPECT_EQ(cfg.bsaveMaxPower(), BSAVE_MAX_POWER);
-    EXPECT_EQ(cfg.keepaliveMs(),   (uint32_t)PASSIVE_KEEPALIVE_MS);
     EXPECT_EQ(cfg.idleLapseMs(),   (uint32_t)BSAVE_IDLE_LAPSE_MS);
 }
 
@@ -47,7 +46,6 @@ TEST_F(EEConfigTest, SaveLoadRoundtrip) {
     strncpy(cfg.name(), "tester", EE_NAME_LEN);
     strncpy(cfg.mqttHost(), "192.168.1.10", EE_HOST_LEN);
     cfg.setBsaveDelta(250);
-    cfg.setKeepaliveMs(30000);
     cfg.save();
 
     // Fake flash persists across instances (no begin() = no re-erase)
@@ -56,7 +54,6 @@ TEST_F(EEConfigTest, SaveLoadRoundtrip) {
     EXPECT_STREQ(fresh.name(), "tester");
     EXPECT_STREQ(fresh.mqttHost(), "192.168.1.10");
     EXPECT_EQ(fresh.bsaveDelta(), 250);
-    EXPECT_EQ(fresh.keepaliveMs(), 30000u);
     EXPECT_STREQ(WiFi.hostnameBuf, "tester");
 }
 
@@ -71,7 +68,6 @@ TEST_F(EEConfigTest, TuningDefaultsWithLegacyMagicOnly) {
     EEConfig fresh;
     EXPECT_TRUE(fresh.load());
     EXPECT_EQ(fresh.bsaveDelta(), BSAVE_MIN_DELTA);
-    EXPECT_EQ(fresh.keepaliveMs(), (uint32_t)PASSIVE_KEEPALIVE_MS);
 }
 
 TEST_F(EEConfigTest, ReadHandlesMissingNullTerminator) {
@@ -81,4 +77,59 @@ TEST_F(EEConfigTest, ReadHandlesMissingNullTerminator) {
     EEConfig fresh;
     EXPECT_TRUE(fresh.load());
     EXPECT_EQ(strlen(fresh.name()), (size_t)(EE_NAME_LEN - 1));
+}
+
+TEST_F(EEConfigTest, ControlStateDefaultsOnErasedFlash) {
+    EXPECT_FALSE(cfg.load());
+    EXPECT_STREQ(cfg.mode(), "auto");
+    EXPECT_EQ(cfg.chargePower(), 0);
+    EXPECT_EQ(cfg.autoLimit(), 16384);
+}
+
+// A reboot must resume the mode that was running, not fall back to auto.
+TEST_F(EEConfigTest, ControlStateSurvivesReload) {
+    cfg.setMode("battery_saver");
+    cfg.setChargePower(2500);
+    cfg.setAutoLimit(8000);
+    cfg.save();
+
+    EEConfig fresh;
+    ASSERT_TRUE(fresh.load());
+    EXPECT_STREQ(fresh.mode(), "battery_saver");
+    EXPECT_EQ(fresh.chargePower(), 2500);
+    EXPECT_EQ(fresh.autoLimit(), 8000);
+}
+
+// Re-issuing the same mode (retained MQTT command, repeated automation) must
+// not burn a flash sector.
+TEST_F(EEConfigTest, RepeatedSameModeDoesNotCommit) {
+    cfg.setMode("charge");
+    cfg.setChargePower(3000);
+    cfg.save();
+    const uint32_t commits = EEPROM.commitCalls;
+    for (int i = 0; i < 20; i++) {
+        cfg.setMode("charge");
+        cfg.setChargePower(3000);
+        cfg.save();
+    }
+    EXPECT_EQ(EEPROM.commitCalls, commits);
+}
+
+TEST_F(EEConfigTest, ModeChangeCommitsOnce) {
+    cfg.setMode("auto");
+    cfg.save();
+    const uint32_t commits = EEPROM.commitCalls;
+    cfg.setMode("standby");
+    cfg.save();
+    EXPECT_EQ(EEPROM.commitCalls, commits + 1);
+}
+
+// Longer names must be truncated, never overflow the 16-byte field.
+TEST_F(EEConfigTest, ModeNameIsTruncatedNotOverflowed) {
+    cfg.setMode("a_very_long_mode_name_that_does_not_fit");
+    EXPECT_EQ(strlen(cfg.mode()), EE_MODE_LEN - 1);
+    cfg.save();
+    EEConfig fresh;
+    ASSERT_TRUE(fresh.load());
+    EXPECT_STREQ(fresh.mode(), cfg.mode());
 }

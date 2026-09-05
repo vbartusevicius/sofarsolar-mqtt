@@ -24,14 +24,18 @@ void AppLog::add(const char* tag, const char* msg) {
     _serial++;
 }
 
-String AppLog::text() const {
-    String out;
-    out.reserve(_len);
-    if (_len < BUF_SZ) {
-        for (unsigned int i = 0; i < _len; i++) out += _buf[i];
-    } else {
-        for (unsigned int i = 0; i < BUF_SZ; i++)   // wrapped: oldest at _head
-            out += _buf[(_head + i) % BUF_SZ];
+unsigned int AppLog::end() const {
+    unsigned int e = _len;
+    while (e > 0 && at(e - 1) == '\n') e--;
+    return e;
+}
+
+unsigned int AppLog::tailStart(unsigned int maxLines) const {
+    if (maxLines == 0) return end();
+    unsigned int e = end(), seen = 0;
+    for (unsigned int i = e; i > 0; i--) {
+        if (at(i - 1) != '\n') continue;
+        if (++seen >= maxLines) return i;
     }
-    return out;
+    return 0;
 }

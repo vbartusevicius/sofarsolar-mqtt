@@ -25,8 +25,14 @@ void SofarWebServer::begin() {
         _server.send_P(200, "text/html", PAGE_HTML);
     });
 
+    // Streamed straight to the socket: the web UI polls this every 5 s, and a
+    // ~1.5 kB String per poll churned the heap for as long as a tab was open.
     _server.on("/json", [this]() {
-        _server.send(200, "application/json", _mqtt.buildJSON());
+        JsonDocument doc;
+        _mqtt.fillState(doc);
+        _server.setContentLength(measureJson(doc));
+        _server.send(200, "application/json", "");
+        serializeJson(doc, _server.client());
     });
 
     _server.on("/settings", [this]() {
@@ -41,11 +47,13 @@ void SofarWebServer::begin() {
         doc["touch_cal"]     = _disp.touchCal().valid;
         doc["bsDelta"]       = _bs.minDelta();
         doc["bsMaxPower"]    = _bs.maxPower();
-        doc["keepaliveS"]    = _inv.keepaliveMs() / 1000;
+        doc["passiveTimeoutS"] = _inv.passiveTimeoutS();
+        doc["timeoutAction"]   = _inv.timeoutAction();
+        doc["keepaliveS"]      = _inv.keepaliveMs() / 1000;
         doc["idleLapseMin"]  = _bs.idleLapseMs() / 60000;
-        String out;
-        serializeJson(doc, out);
-        _server.send(200, "application/json", out);
+        _server.setContentLength(measureJson(doc));
+        _server.send(200, "application/json", "");
+        serializeJson(doc, _server.client());
     });
 
     _server.on("/command", [this]() {
@@ -105,7 +113,6 @@ void SofarWebServer::begin() {
         bool any = false;
         if (_server.hasArg("delta"))     { _bs.setMinDelta(_server.arg("delta").toInt());                _cfg.setBsaveDelta(_bs.minDelta());       any = true; }
         if (_server.hasArg("maxpower"))  { _bs.setMaxPower(_server.arg("maxpower").toInt());             _cfg.setBsaveMaxPower(_bs.maxPower());    any = true; }
-        if (_server.hasArg("keepalive")) { _inv.setKeepaliveMs(_server.arg("keepalive").toInt() * 1000UL); _cfg.setKeepaliveMs(_inv.keepaliveMs()); any = true; }
         if (_server.hasArg("lapse"))     { _bs.setIdleLapse(_server.arg("lapse").toInt() * 60000UL);     _cfg.setIdleLapseMs(_bs.idleLapseMs());   any = true; }
         if (any) _cfg.save();
         JsonDocument doc;
@@ -126,8 +133,22 @@ void SofarWebServer::begin() {
                      "{\"status\":\"ok\",\"message\":\"tap the 3 crosshairs on the LCD\"}");
     });
 
+    // Chunked from the ring buffer: the web UI polls this every 5 s, and a
+    // 2 kB String per poll fragmented the heap over long uptimes.
     _server.on("/log", [this]() {
-        _server.send(200, "text/plain", appLog.text());
+        _server.setContentLength(CONTENT_LENGTH_UNKNOWN);
+        _server.send(200, "text/plain", "");
+        char chunk[129];
+        unsigned int col = 0, e = appLog.end();
+        for (unsigned int i = 0; i < e; i++) {
+            chunk[col++] = appLog.at(i);
+            if (col < sizeof(chunk) - 1) continue;
+            chunk[col] = '\0';
+            _server.sendContent(chunk);
+            col = 0;
+        }
+        if (col > 0) { chunk[col] = '\0'; _server.sendContent(chunk); }
+        _server.sendContent("");
     });
 
     // Firmware upload: POST a .bin built by CI (or `pio run`) here.

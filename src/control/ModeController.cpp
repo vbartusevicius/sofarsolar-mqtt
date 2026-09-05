@@ -6,6 +6,28 @@ void ModeController::setModeName(const char* name) {
     _mode[sizeof(_mode) - 1] = '\0';
 }
 
+void ModeController::persist() {
+    _cfg.setMode(_mode);
+    _cfg.setChargePower(_chargePower);
+    _cfg.setAutoLimit(_autoLimit);
+    _cfg.save();
+}
+
+void ModeController::toggleBatterySaver() {
+    _bs.toggle();
+    setModeName(_bs.isActive() ? "battery_saver" : "standby");
+    persist();
+}
+
+void ModeController::restore() {
+    _chargePower = _cfg.chargePower();
+    _autoLimit   = _cfg.autoLimit();
+    char lb[48];
+    snprintf(lb, sizeof(lb), "Restoring mode '%s'", _cfg.mode());
+    appLog.add("CTL", lb);
+    setMode(_cfg.mode());
+}
+
 void ModeController::setMode(const char* mode) {
     if (strcmp(mode, "battery_saver") == 0) {
         _bs.enable();
@@ -27,7 +49,9 @@ void ModeController::setMode(const char* mode) {
         char lb[48];
         snprintf(lb, sizeof(lb), "Unknown mode '%s', ignored", mode);
         appLog.add("CTL", lb);
+        return;
     }
+    persist();
 }
 
 void ModeController::setCharge(int32_t watts) {
@@ -35,6 +59,7 @@ void ModeController::setCharge(int32_t watts) {
     _chargePower = watts;
     _inv.sendPassiveCommand(watts);
     setModeName("charge");
+    persist();
 }
 
 void ModeController::setAuto(int32_t limit) {
@@ -43,4 +68,5 @@ void ModeController::setAuto(int32_t limit) {
     _autoLimit = limit;
     _inv.sendPassiveRange(-limit, limit);
     setModeName("auto");
+    persist();
 }

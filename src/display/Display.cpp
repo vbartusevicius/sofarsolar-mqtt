@@ -45,6 +45,7 @@
 #define HINT_Y        311
 #define LOG_ROW_H       7   // Picopixel yAdvance
 #define LOG_BASELINE    5   // glyph height above the baseline
+#define LOG_COLS       60   // 232 px / ~4 px per Picopixel char, + NUL
 #define BTN_X           8
 #define BTN_W         224
 
@@ -322,13 +323,15 @@ void Display::updateFlow(const InverterData& inv, const BatterySaver& bs,
         int16_t ox = BTN_X + (BTN_W - strlen(_btnLine1) * CHAR_W * 2) / 2;
         int16_t nx = BTN_X + (BTN_W - strlen(line1)     * CHAR_W * 2) / 2;
         printOver(ox, nx, BTN_Y + 7, 2, fg, btnBg, _btnLine1, line1);
-        strcpy(_btnLine1, line1);
+        strncpy(_btnLine1, line1, sizeof(_btnLine1) - 1);
+        _btnLine1[sizeof(_btnLine1) - 1] = '\0';
     }
     if (strcmp(_btnLine2, line2) != 0) {
         int16_t ox = BTN_X + (BTN_W - strlen(_btnLine2) * CHAR_W) / 2;
         int16_t nx = BTN_X + (BTN_W - strlen(line2)     * CHAR_W) / 2;
         printOver(ox, nx, BTN_Y + 29, 1, CLR_TARGET, btnBg, _btnLine2, line2);
-        strcpy(_btnLine2, line2);
+        strncpy(_btnLine2, line2, sizeof(_btnLine2) - 1);
+        _btnLine2[sizeof(_btnLine2) - 1] = '\0';
     }
 }
 
@@ -383,14 +386,12 @@ void Display::drawLogTail(int16_t y) {
     const int16_t rowH   = LOG_ROW_H;
     const int16_t maxRow = (HINT_Y - 4 - y) / rowH;
 
-    String text = appLog.text();
-    int end = text.length() - 1;
-    while (end >= 0 && text[end] == '\n') end--;   // trim trailing newlines
-    int start = 0, lines = 0;
-    for (int i = end; i >= 0; i--) {
-        if (text[i] != '\n') continue;
-        if (++lines >= maxRow) { start = i + 1; break; }
-    }
+    // Walks the log ring in place with a single row buffer: this runs whenever
+    // the log changes, and the old 2 kB String plus a substring() per row was
+    // the biggest heap churn in the firmware. Now it allocates nothing.
+    char row[LOG_COLS];
+    unsigned int e = appLog.end();
+    unsigned int i = appLog.tailStart(maxRow);
 
     _tft.fillRect(0, y, 240, maxRow * rowH, CLR_BG);
     _tft.setFont(&Picopixel);          // 3x5: ~2x the log in the same space
@@ -398,15 +399,24 @@ void Display::drawLogTail(int16_t y) {
     _tft.setTextWrap(false);
     _tft.setTextColor(CLR_LABEL, CLR_BG);
 
-    int16_t row = 0;
-    int i = start;
-    while (i <= end && row < maxRow) {
-        int nl = text.indexOf('\n', i);
-        if (nl < 0 || nl > end) nl = end + 1;
-        _tft.setCursor(6, y + row * rowH + LOG_BASELINE);   // custom font: y is baseline
-        _tft.print(text.substring(i, nl));
-        i = nl + 1;
-        row++;
+    int16_t line = 0;
+    unsigned int col = 0;
+    for (; i < e && line < maxRow; i++) {
+        char c = appLog.at(i);
+        if (c != '\n') {
+            if (col < sizeof(row) - 1) row[col++] = c;
+            continue;
+        }
+        row[col] = '\0';
+        _tft.setCursor(6, y + line * rowH + LOG_BASELINE);  // custom font: baseline
+        _tft.print(row);
+        line++;
+        col = 0;
+    }
+    if (line < maxRow && col > 0) {     // last entry has no trailing newline
+        row[col] = '\0';
+        _tft.setCursor(6, y + line * rowH + LOG_BASELINE);
+        _tft.print(row);
     }
     _tft.setFont();                    // back to the classic 6x8 font
     _tft.setTextWrap(true);
@@ -416,11 +426,11 @@ void Display::updateSys(const InverterData& inv, const char* sn,
                         bool wifiOk, bool modbusOk, bool mqttOk)
 {
     char v[64];
-    String ip = WiFi.localIP().toString();
     snprintf(v, sizeof(v), "FW: %s", FW_VERSION);
     sysPrint(0, 40, v);
 
-    snprintf(v, sizeof(v), "IP: %s", ip.c_str());
+    IPAddress ip = WiFi.localIP();      // no toString(): that allocated a String
+    snprintf(v, sizeof(v), "IP: %u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
     sysPrint(1, 52, v);
 
     unsigned long up = millis() / 1000;

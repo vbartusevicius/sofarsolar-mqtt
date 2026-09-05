@@ -4,9 +4,9 @@
 #include "util/AppLog.h"
 
 bool Inverter::readBlock(uint16_t start, uint8_t count,
-                         uint8_t* buf, uint8_t& sz)
+                         uint8_t* buf, uint8_t cap, uint8_t& sz)
 {
-    return _mb.readHolding(MODBUS_SLAVE_ID, start, count, buf, sz);
+    return _mb.readHolding(MODBUS_SLAVE_ID, start, count, buf, cap, sz);
 }
 
 uint16_t Inverter::u16(const uint8_t* b, uint16_t reg, uint16_t base) {
@@ -27,6 +27,15 @@ uint32_t Inverter::u32(const uint8_t* b, uint16_t reg, uint16_t base) {
 bool Inverter::readSensors() {
     bool ok = true;
     uint8_t sz;
+
+    if (_error) {
+        uint8_t probe[2];
+        if (!readBlock(REG_WORKING_MODE, 1, probe, sz) || sz < 2) {
+            _data.valid = false;      // never let stale values look current
+            return false;
+        }
+    }
+
     InverterData next = _data;
 
     // System block (23 regs)
@@ -158,7 +167,31 @@ bool Inverter::sendPassiveCommand(int32_t power) {
 }
 
 void Inverter::setKeepaliveMs(uint32_t ms) {
-    _keepaliveMs = ms < 5000UL ? 5000UL : (ms > 55000UL ? 55000UL : ms);
+    if (ms == 0) { _keepaliveMs = 0; return; }         // 0 = never re-send
+    _keepaliveMs = ms < 5000UL ? 5000UL : (ms > 600000UL ? 600000UL : ms);
+}
+
+// The passive timeout is a register, not an assumption. 0x1184 == 0 means the
+// inverter never drops out of passive mode, so an unchanged command never
+// needs re-sending; anything else gets re-sent at half the timeout.
+bool Inverter::readPassiveTimeout() {
+    uint8_t buf[2];
+    uint8_t sz = 0;
+    if (!readBlock(REG_PASSIVE_TIMEOUT, 1, buf, sz) || sz < 2) return false;
+    _passiveTimeoutS = (uint16_t)((buf[0] << 8) | buf[1]);
+    if (_passiveTimeoutS == 0xFFFF) _passiveTimeoutS = 0;   // uninitialised
+
+    uint8_t act[2];
+    if (readBlock(REG_PASSIVE_TMO_ACT, 1, act, sz) && sz >= 2)
+        _timeoutAction = (uint16_t)((act[0] << 8) | act[1]);
+
+    setKeepaliveMs(_passiveTimeoutS ? (uint32_t)_passiveTimeoutS * 500UL : 0);
+    char lb[80];
+    snprintf(lb, sizeof(lb), "passive timeout=%us action=%u keepalive=%lus",
+             (unsigned)_passiveTimeoutS, (unsigned)_timeoutAction,
+             (unsigned long)(_keepaliveMs / 1000));
+    appLog.add("INV", lb);
+    return true;
 }
 
 bool Inverter::sendPassiveRange(int32_t minP, int32_t maxP) {

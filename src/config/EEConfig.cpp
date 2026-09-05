@@ -58,6 +58,11 @@ bool EEConfig::writeEE32(int off, int32_t v) {
     return changed;
 }
 
+void EEConfig::setMode(const char* m) {
+    strncpy(_mode, m, sizeof(_mode) - 1);
+    _mode[sizeof(_mode) - 1] = '\0';
+}
+
 bool EEConfig::load() {
     if ((char)EEPROM.read(EE_MAGIC) != '1') return false;
     readEE(EE_NAME, EE_NAME_LEN, _name);
@@ -69,7 +74,6 @@ bool EEConfig::load() {
     int32_t v;
     if ((v = readEE32(EE_BSAVE_DELTA))   != -1) _bsaveDelta  = v;
     if ((v = readEE32(EE_BSAVE_MAX))     != -1) _bsaveMax    = v;
-    if ((v = readEE32(EE_KEEPALIVE_MS))  != -1) _keepaliveMs = v;
     if ((v = readEE32(EE_IDLE_LAPSE_MS)) != -1) _idleLapseMs = v;
     if (EEPROM.read(EE_TOUCH_CAL) == 1) {         // 0xFF = never calibrated
         _touchCal.valid = true;
@@ -79,6 +83,11 @@ bool EEConfig::load() {
         _touchCal.yLo   = readEE16(EE_TOUCH_CAL + 6);
         _touchCal.yHi   = readEE16(EE_TOUCH_CAL + 8);
     }
+    char m[EE_MODE_LEN];
+    readEE(EE_MODE, EE_MODE_LEN, m);
+    if (m[0] != '\0') setMode(m);
+    if ((v = readEE32(EE_CHARGE_POWER)) != -1) _chargePower = v;
+    if ((v = readEE32(EE_AUTO_LIMIT))   != -1) _autoLimit   = v;
     WiFi.hostname(_name);
     return true;
 }
@@ -95,7 +104,6 @@ void EEConfig::save() {
     if (EEPROM.read(EE_TFT_MODEL)      != 1) { EEPROM.write(EE_TFT_MODEL, 1);      changed = true; }
     changed |= writeEE32(EE_BSAVE_DELTA,   _bsaveDelta);
     changed |= writeEE32(EE_BSAVE_MAX,     _bsaveMax);
-    changed |= writeEE32(EE_KEEPALIVE_MS,  _keepaliveMs);
     changed |= writeEE32(EE_IDLE_LAPSE_MS, _idleLapseMs);
     uint8_t calFlag = _touchCal.valid ? 1 : 0;
     uint8_t calSwap  = _touchCal.swap  ? 1 : 0;
@@ -105,5 +113,8 @@ void EEConfig::save() {
     changed |= writeEE16(EE_TOUCH_CAL + 4, _touchCal.xHi);
     changed |= writeEE16(EE_TOUCH_CAL + 6, _touchCal.yLo);
     changed |= writeEE16(EE_TOUCH_CAL + 8, _touchCal.yHi);
+    changed |= writeEE(EE_MODE, EE_MODE_LEN, _mode);
+    changed |= writeEE32(EE_CHARGE_POWER, _chargePower);
+    changed |= writeEE32(EE_AUTO_LIMIT,   _autoLimit);
     if (changed) EEPROM.commit();   // commit rewrites a whole flash sector
 }

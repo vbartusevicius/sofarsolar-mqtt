@@ -13,6 +13,7 @@
 #define MODBUS_BAUD       9600
 #define MODBUS_TIMEOUT_MS 400       // wait for first response byte
 #define MODBUS_INTERBYTE_MS 20      // gap timeout for bytes within a frame
+#define MODBUS_LISTEN_BUDGET_MS 900 // hard cap on one response read
 #define MODBUS_MAX_FRAME  128
 #define FC_READ_HOLDING   0x03
 #define FC_WRITE_MULTI    0x10
@@ -86,6 +87,8 @@
 // Control
 #define REG_WORKING_MODE   0x1110
 #define REG_PASSIVE_CTRL   0x1187   // Write 6 regs (3×32-bit): PPC, min, max
+#define REG_PASSIVE_TIMEOUT 0x1184  // U16 seconds, 0 = disabled (factory default)
+#define REG_PASSIVE_TMO_ACT 0x1185  // 0 = force standby, 1 = previous mode
 
 #define INTERVAL_BSAVE     3000
 #define INTERVAL_SENSORS   5000
@@ -100,7 +103,10 @@
 #define BSAVE_MIN_DELTA    100      // W  hysteresis: ignore smaller target changes
 #define BSAVE_IDLE_LAPSE_MS 600000UL // stop writes after 10 min at 0 W (night)
 
-#define PASSIVE_KEEPALIVE_MS 45000UL  // inverter times out passive mode after ~60 s
+// Keep-alive is derived from the inverter's own passive timeout (0x1184), not
+// assumed: the factory default is 0 = disabled, and the shortest selectable
+// value is 300 s. 0 here means "never re-send an unchanged command".
+#define PASSIVE_KEEPALIVE_MS 0UL
 
 #define EE_SIZE       512
 #define EE_MAGIC      0       //  1 byte  '1' = configured
@@ -119,8 +125,12 @@
 #define EE_TFT_MODEL      200 // 1 = TFT present
 #define EE_BSAVE_DELTA    204
 #define EE_BSAVE_MAX      208
-#define EE_KEEPALIVE_MS   212
+#define EE_KEEPALIVE_MS   212 // unused: keep-alive now comes from the inverter
 #define EE_IDLE_LAPSE_MS  216
 #define EE_TOUCH_CAL      220 // 10 bytes: valid, swap, 4x int16 raw reference
+#define EE_MODE           232 // 16 bytes: control mode name
+#define EE_MODE_LEN        16
+#define EE_CHARGE_POWER   248
+#define EE_AUTO_LIMIT     252
 
 #endif

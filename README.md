@@ -66,11 +66,13 @@ When enabled, the firmware reads grid power every 3 seconds and adjusts the batt
 The passive-mode register block lives in the inverter's non-volatile memory, which has a limited write endurance. Writes are therefore minimised aggressively (all constants in `Config.h`):
 
 - Target changes smaller than `BSAVE_MIN_DELTA` (100 W) are **not written** (hysteresis).
-- An unchanged command is re-sent at most every `PASSIVE_KEEPALIVE_MS` (45 s) as a keep-alive — the inverter reverts to standby ~60 s without a write.
+- An unchanged command is **not re-sent at all** by default. Earlier versions re-sent every 45 s on the inherited assumption that "the inverter times out passive mode after ~60 s". That is wrong for the HYD: the passive timeout is register `0x1184`, its factory default is `0` (disabled), and the shortest selectable value is 300 s — there is no 60 s setting. The firmware now reads `0x1184` at boot and hourly: `0` means no keep-alive writes ever, and any other value re-sends at half the timeout. The old behaviour was ~1,900 pointless writes/day.
 - When the target stays at 0 W for `BSAVE_IDLE_LAPSE_MS` (10 min — e.g. overnight), writes stop completely and passive mode is allowed to lapse until solar surplus returns.
 - All command paths (battery saver, MQTT, web UI) funnel through the same write cache, so redundant mode changes never produce duplicate register writes.
 
-This reduces writes from ~28,800/day (older firmware) to a few hundred on a typical day and **zero at night**.
+This reduces writes from ~28,800/day (older firmware) to a few dozen on a typical day and **zero at night**.
+
+Why the caution: no public source states whether `0x1187` is EEPROM-backed or volatile, and Sofar does not document it. The solax-modbus project warns that *"most of the writeable parameters are written to EEPROM… typically 100000 write cycles"*, and both it and evcc write `0x1187` **only on change** — no integration re-asserts it periodically. Writing on change only is therefore both the safe choice and the ecosystem consensus.
 
 ### Tuning
 
@@ -80,13 +82,44 @@ The protection parameters are runtime-configurable in the web UI (**Battery Save
 |---|---|---|---|
 | Drift (W) | 100 | 20–2000 | Hysteresis: target changes smaller than this are not written |
 | Max power (W) | 20000 | 0–20000 | Charge ceiling (matches HYD 20 KTL) |
-| Keep-alive (s) | 45 | 5–55 | How often an unchanged command is re-sent (inverter times out ~60 s) |
 | Idle lapse (min) | 10 | 1–60 | Sustained 0 W target before writes stop entirely |
 
-All values are clamped server-side — the keep-alive cannot be set short enough to spam the inverter's flash. The compiled defaults in `Config.h` are used for fresh devices.
+Keep-alive is no longer a setting: it is derived from the inverter's own `0x1184`, and the detected value ("disabled — no keep-alive writes", or the timeout, its action, and the resulting interval) is shown read-only in the same panel. All remaining values are clamped server-side. The compiled defaults in `Config.h` are used for fresh devices.
 
 The battery saver automatically tracks available solar surplus.
 
+
+## Persisted State
+
+EEPROM (the ESP8266's own emulated flash, unrelated to the inverter's) holds the device name and MQTT settings, the four battery-saver tuning values, the touch calibration, and the control state: current mode, charge power and auto limit. A reboot — yours, a firmware upload, or the supervisor's — resumes the mode that was running instead of silently falling back to `auto`.
+
+Every write is dirty-checked: `EEPROM.commit()` rewrites a whole 4 kB sector, so re-issuing an unchanged mode (a retained MQTT command, a repeating automation) costs nothing.
+
+## Long-Uptime Reliability
+
+The device is meant to run unattended for months. The failure modes that matter at that timescale are not the ones that show up in a day of testing, so they are handled explicitly:
+
+**`millis()` wraparound (every 49.7 days).** All elapsed-time checks use the unsigned `now - last >= interval` form, which is wrap-safe. A timestamp is never used as its own "unset" marker, because `millis()` legitimately returns 0 at boot and again at every wrap — timers that need an inactive state carry an explicit `bool` beside the timestamp (`BatterySaver::_zeroTiming`, `HealthState::wifiDown`). Wraparound cases are covered by native tests.
+
+**Untrusted Modbus response lengths.** The byte count in an FC03 response arrives on the wire, and `readSensors()` reads into buffers as small as 2 bytes. A late reply to a previous, larger request — a well-formed frame with a valid CRC, just not the one that was asked for — used to be copied over the caller's stack. `modbusPayloadLen()` (`src/modbus/RespCheck.h`, unit-tested) validates the claimed length against both the received frame and the destination capacity, and `Inverter::readBlock` takes the capacity from the array type so a buffer cannot be resized without its bound following it.
+
+**Bounded Modbus reads.** A response read has a hard wall-clock budget (`MODBUS_LISTEN_BUDGET_MS`). Without it, a bus that keeps delivering bytes addressed to another slave holds the read loop at its first byte forever, since every skipped byte restarts the first-byte timeout. With the link down (inverter asleep, RS485 unplugged) a single cheap probe read is attempted instead of all nine blocks, so a dead link costs one timeout per cycle rather than nine.
+
+**Heap fragmentation.** On a chip with ~40 kB of heap, fragmentation kills long-running firmware sooner than leaks do. Nothing on a repeating path allocates: the LCD log view and `/log` walk the log ring buffer in place, `/json` streams the document straight to the socket, MQTT state is streamed with `beginPublish`/`endPublish`, and the SYS tab formats the IP from its octets rather than calling `toString()`. Heap, largest free block, fragmentation percentage and the low-water mark are visible in the web UI, the LCD SYS tab and MQTT.
+
+**Watchdog.** The main loop is cooperative — no `delay()` over 20 ms outside serial gaps, and the Modbus wait loop yields. Blocking network calls are not attempted when they can only time out (MQTT does not try to connect while WiFi is down).
+
+**Supervisor of last resort** (`src/util/Health.h`, unit-tested). Evaluated once a minute for the two states that cannot be recovered from in software:
+
+| Condition | Action |
+|---|---|
+| WiFi down 2 min | force `WiFi.reconnect()`, repeated every 2 min |
+| WiFi down 30 min | reboot |
+| Free heap < 6 kB **or** largest block < 4 kB, 5 samples running | reboot |
+
+A single low sample or a brief outage is deliberately ignored, and reconnecting resets the timers, so an intermittent access point never causes a reboot loop. `ESP.getResetReason()` is the first line in the log after every boot, so an unattended restart is always attributable.
+
+**Inverter flash wear** is covered separately by the write cache described above — the point of that work is that months of uptime must not translate into months of writes.
 
 ## Testing
 

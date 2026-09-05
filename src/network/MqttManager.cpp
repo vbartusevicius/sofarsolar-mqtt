@@ -161,15 +161,6 @@ void MqttManager::publish() {
     appLog.add("MQTT", lb);
 }
 
-String MqttManager::buildJSON() {
-    JsonDocument doc;
-    fillState(doc);
-    String out;
-    out.reserve(measureJson(doc) + 1);
-    serializeJson(doc, out);
-    return out;
-}
-
 void MqttManager::fillState(JsonDocument& doc) {
     const InverterData& d = _inv.data();
     char fb[16];
@@ -243,4 +234,8 @@ void MqttManager::fillState(JsonDocument& doc) {
     doc["free_heap"]     = heapStats.freeHeap;
     doc["heap_frag"]     = heapStats.frag;
     doc["max_free_block"]= heapStats.maxBlock;
+    // Passive-mode write policy, read from the inverter (0x1184/0x1185)
+    doc["passive_timeout_s"] = _inv.passiveTimeoutS();
+    doc["timeout_action"]    = _inv.timeoutAction();
+    doc["keepalive_s"]       = _inv.keepaliveMs() / 1000;
 }

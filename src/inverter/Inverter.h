@@ -71,10 +71,15 @@ public:
     bool sendPassiveCommand(int32_t power);
     bool sendPassiveRange(int32_t minPower, int32_t maxPower);
 
-    // Idential passive commands are re-sent at most this often; the
-    // register lives in the inverter's NVM.  Clamped to [5 s, 55 s].
+    // Identical passive commands are re-sent at most this often. 0 = never,
+    // which is correct whenever the inverter's passive timeout is disabled.
     void     setKeepaliveMs(uint32_t ms);
     uint32_t keepaliveMs() const { return _keepaliveMs; }
+
+    // Reads 0x1184/0x1185 and derives the keep-alive from them
+    bool     readPassiveTimeout();
+    uint16_t passiveTimeoutS() const { return _passiveTimeoutS; }
+    uint16_t timeoutAction()   const { return _timeoutAction; }
 
     bool hasError() const              { return _error; }
     const InverterData& data() const   { return _data; }
@@ -92,8 +97,19 @@ private:
     int32_t       _lastSentMax   = 0;
     unsigned long _lastSentAt    = 0;
     uint32_t      _keepaliveMs   = PASSIVE_KEEPALIVE_MS;
+    uint16_t      _passiveTimeoutS = 0;   // 0x1184, 0 = disabled
+    uint16_t      _timeoutAction   = 0;   // 0x1185, 0 = force standby
 
-    bool readBlock(uint16_t start, uint8_t count, uint8_t* buf, uint8_t& sz);
+    bool readBlock(uint16_t start, uint8_t count, uint8_t* buf, uint8_t cap,
+                   uint8_t& sz);
+
+    // Capacity is taken from the array type, so a buffer can never be resized
+    // without the bound following it.
+    template <uint8_t N>
+    bool readBlock(uint16_t start, uint8_t count, uint8_t (&buf)[N],
+                   uint8_t& sz) {
+        return readBlock(start, count, buf, N, sz);
+    }
 
     static uint16_t u16(const uint8_t* b, uint16_t reg, uint16_t base);
     static int16_t  s16(const uint8_t* b, uint16_t reg, uint16_t base);

@@ -64,7 +64,7 @@ h2{font-size:1em;color:#94a3b8;border-bottom:1px solid #1e293b;padding:8px 0;mar
 <div class="ctrl">
 <div class="fr"><label>Drift W</label><input id="td" type="number" min="20" max="2000" step="10" value="100"></div>
 <div class="fr"><label>Max Power W</label><input id="tm" type="number" min="0" max="20000" step="100" value="20000"></div>
-<div class="fr"><label>Keep-alive s</label><input id="tk" type="number" min="5" max="55" step="1" value="45"></div>
+<div class="fr"><label>Passive timeout</label><span id="tk" class="tgt">-</span></div>
 <div class="fr"><label>Idle Lapse min</label><input id="tl" type="number" min="1" max="60" step="1" value="10"></div>
 <div class="fr"><button onclick="st()">Apply &amp; Save</button></div>
 </div></div>
@@ -138,6 +138,9 @@ if(d.free_heap!==undefined)sh+='<div class="card"><div class="l">FREE HEAP</div>
 if(d.max_free_block!==undefined)sh+='<div class="card"><div class="l">MAX BLOCK</div><div class="v w">'+d.max_free_block+'</div></div>';
 if(d.heap_frag!==undefined)sh+='<div class="card"><div class="l">HEAP FRAG</div><div class="v '+(d.heap_frag>40?'r':'g')+'">'+d.heap_frag+'%</div></div>';
 if(d.uptime!==undefined){var ut=Math.floor(d.uptime/1000);var uh=Math.floor(ut/3600);var um=Math.floor((ut%3600)/60);sh+='<div class="card"><div class="l">UPTIME</div><div class="v w">'+uh+'h '+um+'m</div></div>';}
+if(d.passive_timeout_s!==undefined)sh+='<div class="card"><div class="l">PASSIVE TIMEOUT</div><div class="v '+(d.passive_timeout_s?'y':'g')+'">'+(d.passive_timeout_s?d.passive_timeout_s+' s':'off')+'</div></div>';
+if(d.timeout_action!==undefined&&d.passive_timeout_s)sh+='<div class="card"><div class="l">TIMEOUT ACTION</div><div class="v w">'+(d.timeout_action?'prev mode':'standby')+'</div></div>';
+if(d.keepalive_s!==undefined)sh+='<div class="card"><div class="l">KEEP-ALIVE</div><div class="v '+(d.keepalive_s?'y':'g')+'">'+(d.keepalive_s?d.keepalive_s+' s':'none')+'</div></div>';
 document.getElementById("sg").innerHTML=sh;
 var h="";for(var k in M){if(k in d)h+=c(k,d[k],M);}
 document.getElementById("mg").innerHTML=h;
@@ -153,7 +156,6 @@ function sc(){fetch("/api/charge?v="+document.getElementById("cp").value).then(f
 function sa(){fetch("/api/auto?v="+document.getElementById("al").value).then(function(){u()});}
 function st(){var p="delta="+document.getElementById("td").value
 +"&maxpower="+document.getElementById("tm").value
-+"&keepalive="+document.getElementById("tk").value
 +"&lapse="+document.getElementById("tl").value;
 fetch("/api/tuning?"+p).then(function(){alert("Tuning applied & saved.");});}
 function uf(){var i=document.getElementById("fwf"),s=document.getElementById("fup");
@@ -181,7 +183,9 @@ document.getElementById("sw").value=d.mqttpass||"";
 document.getElementById("sd").value=d.deviceName||"";
 if(d.bsDelta!==undefined)document.getElementById("td").value=d.bsDelta;
 if(d.bsMaxPower!==undefined)document.getElementById("tm").value=d.bsMaxPower;
-if(d.keepaliveS!==undefined)document.getElementById("tk").value=d.keepaliveS;
+if(d.passiveTimeoutS!==undefined){var t=d.passiveTimeoutS;
+var a=d.timeoutAction?"returns to previous mode":"forces standby";
+document.getElementById("tk").textContent=t?(t+" s ("+a+"), keep-alive "+d.keepaliveS+" s"):"disabled - no keep-alive writes";}
 if(d.idleLapseMin!==undefined)document.getElementById("tl").value=d.idleLapseMin;
 if(d.firmware!==undefined)document.getElementById("fvw").value=d.firmware;
 if(d.touch_cal!==undefined)document.getElementById("tcs").textContent=d.touch_cal?"calibrated":"not calibrated - gestures only";

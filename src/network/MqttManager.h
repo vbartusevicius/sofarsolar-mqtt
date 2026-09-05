@@ -23,7 +23,9 @@ public:
     bool ready()     const { return _ready; }
     bool connected() { return _mqtt.connected(); }
 
-    String buildJSON();
+    // Fills the state document; the web server streams it straight to the
+    // socket instead of materialising a String.
+    void fillState(JsonDocument& doc);
 
 private:
     EEConfig&       _cfg;
@@ -40,7 +42,6 @@ private:
     uint32_t      _pingSeq    = 0;
     uint32_t      _echoSeq    = 0;
 
-    void fillState(JsonDocument& doc);
     void checkLiveness();
     void sendEchoPing();
     void forceReconnect(const char* reason);

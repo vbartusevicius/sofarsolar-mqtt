@@ -1,5 +1,6 @@
 #include "Modbus.h"
 #include "Crc16.h"
+#include "RespCheck.h"
 #include "util/AppLog.h"
 
 void Modbus::begin(unsigned long baud) {
@@ -25,13 +26,19 @@ void Modbus::flush() {
 }
 
 int Modbus::listen(uint8_t slaveId, uint8_t* frame, uint8_t& frameSize,
-                   uint8_t* data, uint8_t& dataSize)
+                   uint8_t* data, uint8_t dataCap, uint8_t& dataSize)
 {
     uint8_t idx = 0, fnCode = 0, expected = 0;
     dataSize = 0;
     frameSize = 0;
 
+    // Hard wall-clock budget. Without it, a bus that keeps delivering bytes
+    // addressed to another slave holds this loop at idx == 0 indefinitely,
+    // because every skipped byte restarts the first-byte timeout.
+    const unsigned long deadline = millis() + MODBUS_LISTEN_BUDGET_MS;
+
     while (idx < MAX_RESP) {
+        if ((long)(millis() - deadline) >= 0) break;
         unsigned long limit = (idx == 0) ? MODBUS_TIMEOUT_MS : MODBUS_INTERBYTE_MS;
         unsigned long start = millis();
         while (!Serial.available() && (millis() - start) < limit) delay(1);
@@ -39,7 +46,7 @@ int Modbus::listen(uint8_t slaveId, uint8_t* frame, uint8_t& frameSize,
 
         frame[idx] = Serial.read();
 
-        if (idx == 0 && frame[0] != slaveId) continue;
+        if (idx == 0 && frame[0] != slaveId) { yield(); continue; }
 
         if (idx == 1) {
             fnCode = frame[1];
@@ -48,8 +55,8 @@ int Modbus::listen(uint8_t slaveId, uint8_t* frame, uint8_t& frameSize,
         }
 
         if (idx == 2 && fnCode == FC_READ_HOLDING) {
-            expected = 3 + frame[2] + 2;   // id + fc + byteCnt + data + crc
-            if (expected > MAX_RESP) return -1;
+            expected = modbusExpectedFrame(frame[2], MAX_RESP);
+            if (expected == 0) return -1;
         }
 
         idx++;
@@ -76,20 +83,26 @@ int Modbus::listen(uint8_t slaveId, uint8_t* frame, uint8_t& frameSize,
         return frame[2];
     }
 
-    // Extract data bytes for FC03 read responses
+    // Extract data bytes for FC03 read responses. byteCnt comes off the wire,
+    // so it is validated against the caller's capacity before any copy.
     if (fnCode == FC_READ_HOLDING && frameSize >= 5) {
-        uint8_t byteCnt = frame[2];
-        for (uint8_t i = 0; i < byteCnt; i++) {
-            data[i] = frame[3 + i];
-            dataSize++;
+        uint8_t len = modbusPayloadLen(frame[2], frameSize, dataCap);
+        if (len == 0) {
+            char lb[56];
+            snprintf(lb, sizeof(lb), "Resp len bad cnt=%u frame=%u cap=%u",
+                     (unsigned)frame[2], (unsigned)frameSize, (unsigned)dataCap);
+            appLog.add("MB", lb);
+            return -1;
         }
+        memcpy(data, &frame[3], len);
+        dataSize = len;
     }
 
     return 0;
 }
 
 bool Modbus::readHolding(uint8_t slaveId, uint16_t reg, uint8_t count,
-                         uint8_t* data, uint8_t& dataSize)
+                         uint8_t* data, uint8_t dataCap, uint8_t& dataSize)
 {
     uint8_t frame[8] = {
         slaveId, FC_READ_HOLDING,
@@ -103,7 +116,7 @@ bool Modbus::readHolding(uint8_t slaveId, uint16_t reg, uint8_t count,
 
     uint8_t resp[MAX_RESP];
     uint8_t respSize = 0;
-    int rc = listen(slaveId, resp, respSize, data, dataSize);
+    int rc = listen(slaveId, resp, respSize, data, dataCap, dataSize);
     if (rc != 0) {
         char lb[48];
         snprintf(lb, sizeof(lb), "RD 0x%04X x%u FAIL rc=%d", reg, count, rc);
@@ -137,7 +150,8 @@ bool Modbus::writeMultiple(uint8_t slaveId, uint16_t reg, uint8_t regCount,
 
     uint8_t resp[MAX_RESP], respData[MAX_RESP];
     uint8_t respSize = 0, respDataSize = 0;
-    int rc = listen(slaveId, resp, respSize, respData, respDataSize);
+    int rc = listen(slaveId, resp, respSize, respData, sizeof(respData),
+                    respDataSize);
     if (rc != 0) {
         char lb[48];
         snprintf(lb, sizeof(lb), "WR 0x%04X x%u FAIL rc=%d", reg, regCount, rc);

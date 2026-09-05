@@ -24,7 +24,7 @@ void BatterySaver::enable() {
     // Force the first update() to write, whatever the inverter cache holds
     _lastSentTarget = -1;
     _lastSentAt     = 0;
-    _zeroStart      = 0;
+    _zeroTiming     = false;
 }
 
 void BatterySaver::disable() {
@@ -52,14 +52,14 @@ void BatterySaver::update() {
     _targetPower = saverAccumulateTarget(_targetPower, d.gridPower, _maxPower);
 
     if (_targetPower == 0) {
-        if (_zeroStart == 0) _zeroStart = now;
+        if (!_zeroTiming) { _zeroTiming = true; _zeroStart = now; }
     } else {
-        _zeroStart = 0;
+        _zeroTiming = false;
     }
 
     if (!saverShouldSend(_targetPower, _lastSentTarget, now, _lastSentAt,
-                         _zeroStart, _minDelta, _inv.keepaliveMs(),
-                         _idleLapseMs)) {
+                         _zeroTiming, _zeroStart, _minDelta,
+                         _inv.keepaliveMs(), _idleLapseMs)) {
         return;
     }
 
