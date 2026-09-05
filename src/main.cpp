@@ -24,7 +24,7 @@ static BatterySaver   bsave(inverter);
 static ModeController control(inverter, bsave);
 static Display        display;
 static MqttManager    mqttMgr(eeConfig, inverter, bsave, control);
-static SofarWebServer webServer(eeConfig, inverter, bsave, mqttMgr, control);
+static SofarWebServer webServer(eeConfig, inverter, bsave, mqttMgr, control, display);
 
 HeapStats heapStats;
 
@@ -38,6 +38,12 @@ void setup() {
     inverter.setKeepaliveMs(eeConfig.keepaliveMs());
 
     display.begin();
+    display.setTouchCal(eeConfig.touchCal());
+    display.onCalibrated([](const TouchCal& c) {
+        eeConfig.setTouchCal(c);
+        eeConfig.save();                 // dirty-checked, so no needless commit
+        appLog.add("TCH", "calibration saved");
+    });
     modbus.begin(MODBUS_BAUD);
     delay(500);
     inverter.readSerialNumber();

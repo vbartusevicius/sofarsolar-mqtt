@@ -9,16 +9,18 @@
 #include "Version.h"
 
 #define CLR_BG       ILI9341_BLACK
-#define CLR_PANEL    0x2104            // dark panel fill
-#define CLR_LABEL    0xBDF7            // light grey
+#define CLR_PANEL    ILI9341_BLACK     // panels are outline-only for contrast
+#define CLR_LABEL    0xE71C            // near-white grey
 #define CLR_EXPORT   ILI9341_GREEN
-#define CLR_IMPORT   ILI9341_RED
-#define CLR_CHARGE   0x04BF            // sky blue
+#define CLR_IMPORT   0xFA8C            // light salmon, readable on black
+#define CLR_CHARGE   0x3D7F            // light sky blue
 #define CLR_DISCHG   ILI9341_ORANGE
 #define CLR_PV       ILI9341_YELLOW
 #define CLR_TARGET   ILI9341_CYAN
 #define CLR_ACTIVE   ILI9341_GREEN
 #define CLR_OFF      0x8410            // dim grey
+
+#define BL_FULL      255   // ESP8266 analogWrite range is 255: 32 was 12% brightness
 
 #define CHAR_W         6   // classic GFX font is 6 px wide at size 1
 
@@ -37,20 +39,20 @@
 #define ND_HOME_X      60
 #define ND_HOME_Y     208
 
-#define BTN_Y         268
-#define BTN_H          44
+#define BTN_Y         266
+#define BTN_H          40
+#define HINT_Y        311
 #define BTN_X           8
 #define BTN_W         224
 
-// XPT2046 mapping knobs.  If taps land wrong, /log shows "raw -> scr" for
-// every tap; flip these four switches / ranges to match the panel.
-#define TS_SWAP_AXES  1   // raw X travels with screen Y
-#define TS_INV_X      0   // invert screen X direction
-#define TS_INV_Y      0   // invert screen Y direction
-#define TS_RAW_X_MIN  250
-#define TS_RAW_X_MAX 3800
-#define TS_RAW_Y_MIN  300
-#define TS_RAW_Y_MAX 3850
+// Touch is gesture-based, not coordinate-based: panel wiring/rotation varies
+// between board revisions and cannot be calibrated blind.
+//   short tap  = toggle battery saver (FLOW tab)
+//   long press = switch tab
+#define TS_POLL_MS     30
+#define TS_LONG_MS    800
+#define TS_CAL_MS    4000   // hold this long to start touch calibration
+#define TS_MIN_TAP_MS  30
 
 Display::Display()
     : _tft(PIN_TFT_CS, PIN_TFT_DC),
@@ -62,8 +64,8 @@ void Display::begin() {
     _tft.setRotation(2);             // portrait, USB at top
     _ts.begin();
     _ts.setRotation(1);
-    analogWrite(PIN_TFT_LED, 32);
-    _brightness = 32;
+    analogWrite(PIN_TFT_LED, BL_FULL);
+    _brightness = BL_FULL;
     _screenOn   = true;
     _lastTouch  = millis();
     _needFullDraw = true;
@@ -99,6 +101,17 @@ void Display::printOver(int16_t x0, int16_t x1, int16_t y, uint8_t size,
     _tft.setCursor(x1, y);
     _tft.setTextColor(fg, bg);
     _tft.print(next);
+}
+
+void Display::drawHint() {
+    const char* hint;
+    if (_cal.valid) hint = "tap tabs/button   hold: switch tab";
+    else            hint = _tab == TAB_FLOW ? "tap: batt save  hold: switch tab"
+                                           : "hold anywhere: switch tab";
+    _tft.setTextSize(1);
+    _tft.setTextColor(CLR_OFF, CLR_BG);
+    _tft.setCursor((240 - (int16_t)strlen(hint) * CHAR_W) / 2, HINT_Y);
+    _tft.print(hint);
 }
 
 void Display::drawTabBar() {
@@ -234,6 +247,10 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
     if (!_screenOn) return;   // skip SPI writes while backlight is off
 
     unsigned long now = millis();
+    if (calibrating()) {                 // wizard owns the screen
+        if (!_calDrawn) drawCalScreen();
+        return;
+    }
     if (!_needFullDraw && (now - _lastRedraw < INTERVAL_DISPLAY)) return;
     _lastRedraw = now;
 
@@ -241,6 +258,7 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
         invalidateCaches();
         _tft.fillScreen(CLR_BG);
         drawTabBar();
+        drawHint();
         _needFullDraw = false;
     }
 
@@ -301,7 +319,8 @@ void Display::updateFlow(const InverterData& inv, const BatterySaver& bs,
         uint16_t bg = active ? 0x03E0 : 0x4000;
         _tft.fillRect(BTN_X, BTN_Y, BTN_W, BTN_H, bg);
         _tft.drawRect(BTN_X, BTN_Y, BTN_W, BTN_H, active ? CLR_ACTIVE : CLR_IMPORT);
-        _btnValid = true;
+        _btnValid  = true;
+        _btnActive = active;
         _btnLine1[0] = _btnLine2[0] = '\0';   // force text repaint
     }
     uint16_t btnBg = active ? 0x03E0 : 0x4000;
@@ -376,7 +395,7 @@ void Display::drawLogTail(int16_t y) {
             if (lines >= LOG_LINES_MAX) { start = i + 1; break; }
         }
     }
-    _tft.fillRect(0, y, 240, 316 - y, CLR_BG);
+    _tft.fillRect(0, y, 240, HINT_Y - 4 - y, CLR_BG);
     _tft.setTextSize(1);
     _tft.setTextColor(CLR_OFF, CLR_BG);
     _tft.setCursor(8, y);
@@ -404,7 +423,8 @@ void Display::updateSys(const InverterData& inv, const char* sn,
     snprintf(v, sizeof(v), "Inverter SN: %s", sn);
     sysPrint(3, 76, v);
 
-    snprintf(v, sizeof(v), "Touch: %s", _touchDbg[0] ? _touchDbg : "-");
+    snprintf(v, sizeof(v), "Touch %s: %s", _cal.valid ? "cal" : "UNCAL",
+             _touchDbg[0] ? _touchDbg : "no taps yet");
     sysPrint(4, 88, v);
 
     drawStatusDots(wifiOk, modbusOk, mqttOk);
@@ -420,39 +440,161 @@ void Display::updateSys(const InverterData& inv, const char* sn,
 }
 
 
-bool Display::pollTouch() {
-    if (!_ts.tirqTouched()) { _touchedPrev = false; return false; }
-    if (!_ts.touched())     { _touchedPrev = false; return false; }
-    if (_touchedPrev)       return false;   // de-bounce: one event per press
+void Display::startCalibration() {
+    _calStep  = CAL_A;
+    _calDrawn = false;
+    _calRetry = false;
+    _cal.valid = false;
+    // If the wizard was started by a long press, the finger is still down:
+    // that press must not be mistaken for the first target tap.
+    _calIgnorePress = _touchedPrev;
+    if (!_screenOn) wake();
+    appLog.add("TCH", "calibration started");
+}
 
-    _touchedPrev = true;
-    _lastTouch   = millis();
+void Display::drawCalScreen() {
+    static const int16_t tx[3] = {TCAL_LO_X, TCAL_HI_X, TCAL_LO_X};
+    static const int16_t ty[3] = {TCAL_LO_Y, TCAL_LO_Y, TCAL_HI_Y};
+    _tft.fillScreen(CLR_BG);
+    drawCentered(120, "TOUCH CALIBRATION", 2, CLR_PV);
+    char msg[32];
+    snprintf(msg, sizeof(msg), "tap the crosshair  %d of 3", _calStep + 1);
+    drawCentered(150, msg, 1, CLR_LABEL);
+    if (_calRetry)
+        drawCentered(170, "bad samples - starting over", 1, CLR_IMPORT);
 
-    if (!_screenOn) { wake(); return false; }
+    int16_t x = tx[_calStep], y = ty[_calStep];
+    _tft.drawCircle(x, y, 10, CLR_LABEL);
+    _tft.drawCircle(x, y, 3, CLR_ACTIVE);
+    _tft.drawFastHLine(x - 16, y, 33, CLR_ACTIVE);
+    _tft.drawFastVLine(x, y - 16, 33, CLR_ACTIVE);
+    _calDrawn = true;
+}
 
-    TS_Point p = _ts.getPoint();
-    int16_t rx = TS_SWAP_AXES ? p.y : p.x;
-    int16_t ry = TS_SWAP_AXES ? p.x : p.y;
-    int16_t sx = map(rx, TS_RAW_X_MIN, TS_RAW_X_MAX, TS_INV_X ? 240 : 0, TS_INV_X ? 0 : 240);
-    int16_t sy = map(ry, TS_RAW_Y_MIN, TS_RAW_Y_MAX, TS_INV_Y ? 320 : 0, TS_INV_Y ? 0 : 320);
-
-    snprintf(_touchDbg, sizeof(_touchDbg), "raw %d,%d -> scr %d,%d",
-             (int)p.x, (int)p.y, (int)sx, (int)sy);
-    appLog.add("TCH", _touchDbg);
-
-    if (sy >= 0 && sy < TAB_H) {           // tab bar
-        setTab(sx < TAB_FLOW_X1 ? TAB_FLOW : TAB_SYS);
+// Averages the readings taken while the finger is down: a single sample is
+// noisy, and the first few counts arrive while contact is still settling.
+bool Display::calPollTouch(bool down, unsigned long now) {
+    if (_calIgnorePress) {
+        if (down) { _lastTouch = now; return false; }
+        _calIgnorePress = false;
+        _touchedPrev    = false;
         return false;
     }
-    if (_tab == TAB_FLOW && sy >= BTN_Y)   // saver toggle button
-        return true;
+    if (down) {
+        _lastTouch = now;
+        if (!_touchedPrev) {
+            _touchedPrev = true;
+            _pressStart  = now;
+            _calSumX = _calSumY = 0;
+            _calCount = 0;
+            return false;
+        }
+        if (now - _pressStart >= 60) {          // let the contact settle first
+            TS_Point p = _ts.getPoint();
+            _calSumX += p.x;
+            _calSumY += p.y;
+            _calCount++;
+        }
+        return false;
+    }
+    if (!_touchedPrev) return false;
+    _touchedPrev = false;
+    if (_calCount < 2) return false;             // too brief to trust
+
+    _calRaw[_calStep].x = (int16_t)(_calSumX / _calCount);
+    _calRaw[_calStep].y = (int16_t)(_calSumY / _calCount);
+    snprintf(_touchDbg, sizeof(_touchDbg), "cal %d raw %d,%d n=%d",
+             _calStep + 1, (int)_calRaw[_calStep].x, (int)_calRaw[_calStep].y,
+             (int)_calCount);
+    appLog.add("TCH", _touchDbg);
+
+    if (_calStep < CAL_C) { _calStep++; _calDrawn = false; return false; }
+
+    TouchCal built;
+    if (!touchCalBuild(_calRaw[0], _calRaw[1], _calRaw[2], built)) {
+        appLog.add("TCH", "calibration rejected: no usable travel");
+        _calStep  = CAL_A;
+        _calRetry = true;
+        _calDrawn = false;
+        return false;
+    }
+    _cal      = built;
+    _calStep  = CAL_DONE;
+    _needFullDraw = true;
+    snprintf(_touchDbg, sizeof(_touchDbg), "cal ok swap=%d x %d..%d y %d..%d",
+             (int)_cal.swap, (int)_cal.xLo, (int)_cal.xHi,
+             (int)_cal.yLo, (int)_cal.yHi);
+    appLog.add("TCH", _touchDbg);
+    if (_calSaved) _calSaved(_cal);
     return false;
+}
+
+// Gesture-based, so it cannot be broken by panel rotation/wiring:
+//   press               -> wake if the backlight is off (consumes the gesture)
+//   release before 800ms -> short tap: toggle battery saver (FLOW tab only)
+//   held past 800ms      -> switch tab, fires once per press
+bool Display::pollTouch() {
+    unsigned long now = millis();
+    if (now - _lastPollAt < TS_POLL_MS) return false;
+    _lastPollAt = now;
+
+    bool down = _ts.touched();
+    if (calibrating()) return calPollTouch(down, now);
+
+    if (down) {
+        _lastTouch = now;
+        if (!_touchedPrev) {                       // press
+            _touchedPrev = true;
+            _pressStart  = now;
+            _longFired   = false;
+            _tapX = _tapY = -1;
+            if (!_screenOn) { wake(); _longFired = true; return false; }
+            TS_Point p = _ts.getPoint();
+            if (_cal.valid) {
+                touchCalApply(_cal, p.x, p.y, _tapX, _tapY);
+                snprintf(_touchDbg, sizeof(_touchDbg), "raw %d,%d -> %d,%d",
+                         (int)p.x, (int)p.y, (int)_tapX, (int)_tapY);
+            } else {
+                snprintf(_touchDbg, sizeof(_touchDbg), "raw %d,%d (uncal)",
+                         (int)p.x, (int)p.y);
+            }
+            appLog.add("TCH", _touchDbg);
+            return false;
+        }
+        if (!_longFired && now - _pressStart >= TS_LONG_MS) {
+            _longFired = true;                     // long press: switch tab
+            setTab(_tab == TAB_FLOW ? TAB_SYS : TAB_FLOW);
+            appLog.add("TCH", _tab == TAB_SYS ? "long press -> SYS"
+                                              : "long press -> FLOW");
+        }
+        if (now - _pressStart >= TS_CAL_MS) startCalibration();
+        return false;
+    }
+
+    if (!_touchedPrev) return false;
+    _touchedPrev = false;                          // release
+    bool shortTap = !_longFired && (now - _pressStart) >= TS_MIN_TAP_MS;
+    if (!shortTap) return false;
+
+    if (_cal.valid && _tapX >= 0) {                // calibrated: use regions
+        if (_tapY < TAB_H) {
+            setTab(_tapX < TAB_FLOW_X1 ? TAB_FLOW : TAB_SYS);
+            return false;
+        }
+        bool inBtn = _tab == TAB_FLOW && _tapX >= BTN_X && _tapX < BTN_X + BTN_W
+                     && _tapY >= BTN_Y && _tapY < BTN_Y + BTN_H;
+        if (inBtn) appLog.add("TCH", "button -> toggle saver");
+        return inBtn;
+    }
+    if (_tab != TAB_FLOW) return false;            // uncalibrated fallback
+    appLog.add("TCH", "tap -> toggle saver");
+    return true;
 }
 
 void Display::wake() {
     _tft.begin();
     _tft.setRotation(2);
-    _brightness = 32;
+    _brightness = BL_FULL;
     analogWrite(PIN_TFT_LED, _brightness);
     _screenOn     = true;
     _needFullDraw = true;

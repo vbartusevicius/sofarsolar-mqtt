@@ -86,6 +86,13 @@ h2{font-size:1em;color:#94a3b8;border-bottom:1px solid #1e293b;padding:8px 0;mar
 <div class="fr"><label>Progress</label><span id="fup" class="tgt">idle</span></div>
 </div></div>
 
+<div class="section"><h2>Touch Screen</h2>
+<div class="ctrl">
+<div class="fr"><label>Calibration</label><span id="tcs" class="tgt">-</span></div>
+<div class="fr"><label>&nbsp;</label><button onclick="tc()">Calibrate Now</button></div>
+<div class="fr"><label>&nbsp;</label><span class="tgt">Tap the 3 crosshairs on the LCD. Can also be started by holding the screen for 4 s.</span></div>
+</div></div>
+
 <div class="section"><h2>System</h2>
 <div class="grid" id="sg"></div></div>
 
@@ -138,6 +145,8 @@ var eh="";for(var k in E){if(k in d)eh+=c(k,d[k],E);}
 document.getElementById("eg").innerHTML=eh;
 }).catch(function(){document.getElementById("dw").className="dot off";});}
 
+function tc(){fetch("/api/touch_cal",{method:"POST"}).then(function(r){return r.json()}).then(function(j){
+document.getElementById("tcs").textContent=j.message;});}
 function tb(){fetch("/api/battery_save").then(function(){u()});}
 function sm(v){fetch("/api/mode?v="+v).then(function(){u()});}
 function sc(){fetch("/api/charge?v="+document.getElementById("cp").value).then(function(){u()});}
@@ -175,6 +184,7 @@ if(d.bsMaxPower!==undefined)document.getElementById("tm").value=d.bsMaxPower;
 if(d.keepaliveS!==undefined)document.getElementById("tk").value=d.keepaliveS;
 if(d.idleLapseMin!==undefined)document.getElementById("tl").value=d.idleLapseMin;
 if(d.firmware!==undefined)document.getElementById("fvw").value=d.firmware;
+if(d.touch_cal!==undefined)document.getElementById("tcs").textContent=d.touch_cal?"calibrated":"not calibrated - gestures only";
 });
 </script></body></html>)rawliteral";
 

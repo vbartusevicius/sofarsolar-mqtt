@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include "Config.h"
+#include "display/TouchCal.h"
 
 class EEConfig {
 public:
@@ -31,6 +32,9 @@ public:
     void setKeepaliveMs(uint32_t ms){ _keepaliveMs = (int32_t)ms; }
     void setIdleLapseMs(uint32_t ms){ _idleLapseMs = (int32_t)ms; }
 
+    const TouchCal& touchCal() const     { return _touchCal; }
+    void setTouchCal(const TouchCal& c)  { _touchCal = c; }
+
 private:
     char _name[EE_NAME_LEN] = "Sofar";
     char _host[EE_HOST_LEN] = "";
@@ -43,8 +47,12 @@ private:
     int32_t _keepaliveMs = PASSIVE_KEEPALIVE_MS;
     int32_t _idleLapseMs = BSAVE_IDLE_LAPSE_MS;
 
+    TouchCal _touchCal;   // invalid until the on-screen wizard has run
+
     static void    readEE(int off, int len, char* dst);
     static bool    writeEE(int off, int len, const char* v);
+    static int16_t readEE16(int off);
+    static bool    writeEE16(int off, int16_t v);
     static int32_t readEE32(int off);
     static bool    writeEE32(int off, int32_t v);
 };

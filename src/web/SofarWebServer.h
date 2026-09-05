@@ -8,11 +8,12 @@ class Inverter;
 class BatterySaver;
 class MqttManager;
 class ModeController;
+class Display;
 
 class SofarWebServer {
 public:
     SofarWebServer(EEConfig& cfg, Inverter& inv, BatterySaver& bs,
-                   MqttManager& mqtt, ModeController& ctrl);
+                   MqttManager& mqtt, ModeController& ctrl, Display& disp);
 
     void begin();
     void handleClient() { _server.handleClient(); }
@@ -24,6 +25,7 @@ private:
     BatterySaver&    _bs;
     MqttManager&     _mqtt;
     ModeController&  _ctrl;
+    Display&         _disp;
 
     void handleFirmwareUpload();
 };

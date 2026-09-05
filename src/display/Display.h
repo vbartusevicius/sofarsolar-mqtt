@@ -3,6 +3,7 @@
 
 #include <Adafruit_ILI9341.h>
 #include <XPT2046_Touchscreen.h>
+#include "display/TouchCal.h"
 
 struct InverterData;
 class  BatterySaver;
@@ -25,8 +26,19 @@ public:
 
     void handleDimming();
 
+    // Touch calibration. Without a stored calibration only gestures work
+    // (tap = saver, hold = tab); with one, the tab bar and button are tappable.
+    void startCalibration();
+    void setTouchCal(const TouchCal& c) { _cal = c; }
+    const TouchCal& touchCal() const    { return _cal; }
+    bool calibrating() const            { return _calStep < CAL_DONE; }
+    // Called once when the wizard produces a usable calibration, so the
+    // caller can persist it. Display itself knows nothing about EEPROM.
+    void onCalibrated(void (*cb)(const TouchCal&)) { _calSaved = cb; }
+
 private:
     enum Tab : uint8_t { TAB_FLOW = 0, TAB_SYS = 1 };
+    enum CalStep : uint8_t { CAL_A = 0, CAL_B, CAL_C, CAL_DONE };
 
     Adafruit_ILI9341      _tft;
     XPT2046_Touchscreen   _ts;
@@ -41,13 +53,29 @@ private:
     bool          _needFullDraw = true;
     const char*   _sn           = "";
     char          _touchDbg[40] = "";
+    unsigned long _pressStart   = 0;
+    unsigned long _lastPollAt   = 0;
+    bool          _longFired    = false;
+
+    TouchCal      _cal;
+    uint8_t       _calStep      = CAL_DONE;
+    bool          _calDrawn     = false;
+    bool          _calRetry     = false;
+    bool          _calIgnorePress = false;
+    TouchSample   _calRaw[3]    = {};
+    int32_t       _calSumX      = 0;
+    int32_t       _calSumY      = 0;
+    int16_t       _calCount     = 0;
+    void (*_calSaved)(const TouchCal&) = nullptr;
+    int16_t       _tapX         = -1;   // last press in screen pixels, -1 if unknown
+    int16_t       _tapY         = -1;
 
     // Repaint only changed content — full redraws roll visibly over SPI
     struct NodeCache { char value[20] = ""; char sub[28] = ""; uint16_t color = 0; bool valid = false; };
     struct ArrowCache { char label[12] = ""; bool dir = false; bool drawn = false; };
     struct ArrowDef { int16_t fx, fy, tx, ty, lx, ly; };
     static constexpr uint8_t SYS_LINES = 5;
-    static constexpr uint8_t LOG_LINES_MAX = 19;
+    static constexpr uint8_t LOG_LINES_MAX = 17;
 
     NodeCache  _ndSolar, _ndGrid, _ndBatt, _ndHome;
     ArrowCache _arPv, _arGrid, _arBatt;
@@ -65,6 +93,7 @@ private:
     void setTab(Tab t);
     void invalidateCaches();
     void drawTabBar();
+    void drawHint();
     void drawNodeFrame(int16_t x, int16_t y, int16_t w, int16_t h,
                        const char* name);
     void redrawNode(int16_t x, int16_t y, int16_t w, int16_t h,
@@ -85,6 +114,8 @@ private:
     void sysPrint(uint8_t idx, int16_t y, const char* text);
     void drawStatusDots(bool wifiOk, bool modbusOk, bool mqttOk);
     void drawLogTail(int16_t y);
+    void drawCalScreen();
+    bool calPollTouch(bool down, unsigned long now);
     void wake();
 };
 

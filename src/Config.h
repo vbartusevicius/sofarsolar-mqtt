@@ -121,5 +121,6 @@
 #define EE_BSAVE_MAX      208
 #define EE_KEEPALIVE_MS   212
 #define EE_IDLE_LAPSE_MS  216
+#define EE_TOUCH_CAL      220 // 10 bytes: valid, swap, 4x int16 raw reference
 
 #endif

@@ -8,14 +8,16 @@
 #include "control/BatterySaver.h"
 #include "network/MqttManager.h"
 #include "control/ModeController.h"
+#include "display/Display.h"
 #include "web/WebPage.h"
 #include "util/AppLog.h"
 #include "Version.h"
 
 SofarWebServer::SofarWebServer(EEConfig& cfg, Inverter& inv,
                                BatterySaver& bs, MqttManager& mqtt,
-                               ModeController& ctrl)
-    : _server(80), _cfg(cfg), _inv(inv), _bs(bs), _mqtt(mqtt), _ctrl(ctrl)
+                               ModeController& ctrl, Display& disp)
+    : _server(80), _cfg(cfg), _inv(inv), _bs(bs), _mqtt(mqtt), _ctrl(ctrl),
+      _disp(disp)
 {}
 
 void SofarWebServer::begin() {
@@ -36,6 +38,7 @@ void SofarWebServer::begin() {
         doc["deviceName"]    = _cfg.name();
         doc["serialNumber"]  = _inv.serialNumber();
         doc["firmware"]      = FW_VERSION;
+        doc["touch_cal"]     = _disp.touchCal().valid;
         doc["bsDelta"]       = _bs.minDelta();
         doc["bsMaxPower"]    = _bs.maxPower();
         doc["keepaliveS"]    = _inv.keepaliveMs() / 1000;
@@ -113,6 +116,14 @@ void SofarWebServer::begin() {
         String out;
         serializeJson(doc, out);
         _server.send(200, "application/json", out);
+    });
+
+    // Starts the on-screen wizard; the result is persisted by the callback
+    // Display was given in setup(), so nothing to do here but kick it off.
+    _server.on("/api/touch_cal", HTTP_POST, [this]() {
+        _disp.startCalibration();
+        _server.send(200, "application/json",
+                     "{\"status\":\"ok\",\"message\":\"tap the 3 crosshairs on the LCD\"}");
     });
 
     _server.on("/log", [this]() {

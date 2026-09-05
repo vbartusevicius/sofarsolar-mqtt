@@ -12,7 +12,7 @@ Forked from [Sofar2mqtt](https://github.com/IgorYbema/Sofar2mqtt) and rewritten 
 - **MQTT** state publishing as a single JSON payload with configurable interval
 - **Home Assistant** auto-discovery for ~45 sensors + a battery-saver switch
 - **Battery Saver** mode — charges from excess solar, prevents grid discharge
-- **ILI9341 TFT** with tabbed UI: live power-flow diagram (PV ⇄ Home ⇄ Grid/Battery arrows) + a system tab (version, IP, RSSI, heap, log tail); touch toggles battery saver
+- **ILI9341 TFT** with tabbed UI: live power-flow diagram (PV ⇄ Home ⇄ Grid/Battery arrows) + a system tab (version, IP, RSSI, heap, log tail), with a self-calibrating touch layer
 - **Web dashboard** at `http://<device-ip>/` with live data, settings, and battery-saver control
 - **WiFiManager** captive portal for first-time WiFi + MQTT setup
 - **ArduinoOTA** for over-the-air firmware updates
@@ -133,6 +133,23 @@ IDE note: `.clangd` is machine-specific and gitignored; `tools/gen_clangd.py` re
 - **Pins:** TFT CS=D1, DC=D2, LED=D8, Touch CS=0, Touch IRQ=2
 
 Connect RS485 A/B wires to the inverter's 485s port. Power the module from 5V USB.
+
+## Touchscreen
+
+Resistive panels have no absolute coordinate system: the XPT2046 reports a 12-bit ratio of a resistive divider whose usable range is specific to the individual panel, and the overlay's axis order and direction are independent of the TFT rotation. Both are therefore measured, never assumed.
+
+**Gestures always work, calibrated or not:**
+
+| Gesture | Action |
+|---|---|
+| Tap | Toggle battery saver (FLOW tab) |
+| Hold 0.8 s | Switch tab |
+| Hold 4 s | Start touch calibration |
+| Tap while dimmed | Wake the backlight |
+
+**Calibration** is started by holding the screen for 4 s, or from the web UI's *Touch Screen* panel. Tap the three crosshairs; the wizard averages the readings taken while each press is held, derives the axis order, direction and scale (`touchCalBuild()` in `src/display/TouchCal.h`), and stores 10 bytes in EEPROM. Bad input — saturated reads, a dead channel, or three taps in the same place — is rejected and the wizard restarts rather than saving a plausible-looking but wrong mapping. Once calibrated, the tab bar and the battery-saver button become directly tappable; the gestures remain as a fallback. Calibration state is shown in the web UI and on the LCD SYS tab, and every tap is logged to `/log` under `TCH`.
+
+The mapping is pure, Arduino-free logic and is covered by native tests over all eight axis-order/inversion permutations.
 
 ## Releases & Firmware Update
 

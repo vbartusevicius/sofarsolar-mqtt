@@ -27,6 +27,21 @@ bool EEConfig::writeEE(int off, int len, const char* v) {
     return changed;
 }
 
+int16_t EEConfig::readEE16(int off) {
+    uint16_t v = (uint16_t)EEPROM.read(off) | ((uint16_t)EEPROM.read(off + 1) << 8);
+    return (int16_t)v;
+}
+
+bool EEConfig::writeEE16(int off, int16_t v) {
+    bool changed = false;
+    uint16_t u = (uint16_t)v;
+    for (int i = 0; i < 2; i++) {
+        uint8_t b = (uint8_t)(u >> (8 * i));
+        if (EEPROM.read(off + i) != b) { EEPROM.write(off + i, b); changed = true; }
+    }
+    return changed;
+}
+
 int32_t EEConfig::readEE32(int off) {
     uint32_t v = 0;
     for (int i = 0; i < 4; i++) v |= (uint32_t)EEPROM.read(off + i) << (8 * i);
@@ -56,6 +71,14 @@ bool EEConfig::load() {
     if ((v = readEE32(EE_BSAVE_MAX))     != -1) _bsaveMax    = v;
     if ((v = readEE32(EE_KEEPALIVE_MS))  != -1) _keepaliveMs = v;
     if ((v = readEE32(EE_IDLE_LAPSE_MS)) != -1) _idleLapseMs = v;
+    if (EEPROM.read(EE_TOUCH_CAL) == 1) {         // 0xFF = never calibrated
+        _touchCal.valid = true;
+        _touchCal.swap  = EEPROM.read(EE_TOUCH_CAL + 1) != 0;
+        _touchCal.xLo   = readEE16(EE_TOUCH_CAL + 2);
+        _touchCal.xHi   = readEE16(EE_TOUCH_CAL + 4);
+        _touchCal.yLo   = readEE16(EE_TOUCH_CAL + 6);
+        _touchCal.yHi   = readEE16(EE_TOUCH_CAL + 8);
+    }
     WiFi.hostname(_name);
     return true;
 }
@@ -74,5 +97,13 @@ void EEConfig::save() {
     changed |= writeEE32(EE_BSAVE_MAX,     _bsaveMax);
     changed |= writeEE32(EE_KEEPALIVE_MS,  _keepaliveMs);
     changed |= writeEE32(EE_IDLE_LAPSE_MS, _idleLapseMs);
+    uint8_t calFlag = _touchCal.valid ? 1 : 0;
+    uint8_t calSwap  = _touchCal.swap  ? 1 : 0;
+    if (EEPROM.read(EE_TOUCH_CAL)     != calFlag) { EEPROM.write(EE_TOUCH_CAL, calFlag);        changed = true; }
+    if (EEPROM.read(EE_TOUCH_CAL + 1) != calSwap) { EEPROM.write(EE_TOUCH_CAL + 1, calSwap);    changed = true; }
+    changed |= writeEE16(EE_TOUCH_CAL + 2, _touchCal.xLo);
+    changed |= writeEE16(EE_TOUCH_CAL + 4, _touchCal.xHi);
+    changed |= writeEE16(EE_TOUCH_CAL + 6, _touchCal.yLo);
+    changed |= writeEE16(EE_TOUCH_CAL + 8, _touchCal.yHi);
     if (changed) EEPROM.commit();   // commit rewrites a whole flash sector
 }
