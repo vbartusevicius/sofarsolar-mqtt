@@ -214,13 +214,17 @@ TEST(Integration, OptionBFallbackAndSingleIntegrationWhenReadbackFails) {
     EXPECT_EQ(inv.data().gridPower, 600);
     EXPECT_EQ(inv.data().sampleSeq, 1u);
 
-    // Probing [0, 20000] fails readback -> falls back to Option B loop in the
-    // same update() and sends (600, 600)
+    // Probing [0, 20000] is retried 3 times; on the 3rd rejection it falls back
+    // to Option B loop in the same update() and sends (600, 600)
+    bs.update();
+    EXPECT_EQ(bs.strategy(), BatterySaver::BSAVE_PROBING);
+    bs.update();
+    EXPECT_EQ(bs.strategy(), BatterySaver::BSAVE_PROBING);
     bs.update();
     EXPECT_EQ(bs.strategy(), BatterySaver::BSAVE_LOOP);
     EXPECT_STREQ(bs.strategyName(), "loop");
     EXPECT_EQ(bs.targetPower(), 600);
-    EXPECT_EQ(FakeInverterBus::fc16Count, 2u);
+    EXPECT_EQ(FakeInverterBus::fc16Count, 4u);
     EXPECT_EQ(FakeInverterBus::lastMinWritten, 600);
     EXPECT_EQ(FakeInverterBus::lastMaxWritten, 600);
 
@@ -228,11 +232,11 @@ TEST(Integration, OptionBFallbackAndSingleIntegrationWhenReadbackFails) {
     fakeClock().now += 3000;
     bs.update();
     EXPECT_EQ(bs.targetPower(), 600);
-    EXPECT_EQ(FakeInverterBus::fc16Count, 2u);
+    EXPECT_EQ(FakeInverterBus::fc16Count, 4u);
 
     // Switching from battery_saver to charge(2500) must emit ONE write, not 0 W then 2500 W
     ctrl.setCharge(2500);
-    EXPECT_EQ(FakeInverterBus::fc16Count, 3u);
+    EXPECT_EQ(FakeInverterBus::fc16Count, 5u);
     EXPECT_EQ(FakeInverterBus::lastMinWritten, 2500);
     EXPECT_EQ(FakeInverterBus::lastMaxWritten, 2500);
 }

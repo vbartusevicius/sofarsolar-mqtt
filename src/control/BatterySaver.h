@@ -43,6 +43,7 @@ private:
     bool          _zeroTiming = false;   // 0 is a valid millis(), so flag it
     uint32_t      _lastSampleSeq = 0;
     Strategy      _strategy      = BSAVE_PROBING;
+    uint8_t       _probeFailures    = 0;
     uint8_t       _nativeFailStreak = 0;
 
     int32_t  _minDelta    = BSAVE_MIN_DELTA;

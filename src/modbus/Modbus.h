@@ -15,7 +15,7 @@ public:
 
 private:
     static constexpr uint8_t  MAX_RESP       = MODBUS_MAX_FRAME;
-    static constexpr uint32_t MIN_SILENCE_MS = 5;   // >3.5 chars at 9600 baud
+    static constexpr uint32_t MIN_SILENCE_MS = 20;  // HYD RS485 turnaround gap
 
     unsigned long _lastBusAt   = 0;
     bool          _hadActivity = false;

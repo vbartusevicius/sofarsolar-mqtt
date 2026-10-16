@@ -37,6 +37,7 @@ void BatterySaver::enable() {
     _zeroTiming       = false;
     _lastSampleSeq    = 0;
     _strategy         = BSAVE_PROBING;
+    _probeFailures    = 0;
     _nativeFailStreak = 0;
 }
 
@@ -61,10 +62,9 @@ void BatterySaver::update() {
 
     if (_strategy == BSAVE_PROBING) {
         // An FC16 ACK from 0x1187 confirms the inverter accepted the 6-register
-        // [Gdes=0, Blo=0, Bup=_maxPower] write. Do NOT immediately FC03-read
-        // 0x1187 back: on the HYD, the read-only mirror updates asynchronously
-        // (up to minutes later), so an immediate readback reads stale 0s and
-        // falsely rejects native mode.
+        // [Gdes=0, Blo=0, Bup=_maxPower] write. Retry up to 3 times before
+        // concluding the inverter rejected the asymmetric window, so a single
+        // RS485 turnaround timeout at boot does not force software-loop mode.
         if (_inv.sendPassiveRange(0, _maxPower)) {
             _strategy         = BSAVE_NATIVE;
             _targetPower      = _maxPower;
@@ -73,11 +73,12 @@ void BatterySaver::update() {
             appLog.add("BSV", "native [0..max] window active");
             return;
         }
+        if (++_probeFailures < 3) return;
         _strategy       = BSAVE_LOOP;
         _targetPower    = 0;
         _lastSentTarget = -1;
         _lastSampleSeq  = 0;
-        appLog.add("BSV", "native window write rejected, using software loop");
+        appLog.add("BSV", "native window write rejected 3x, using software loop");
     }
 
     if (_strategy == BSAVE_NATIVE) {
