@@ -18,7 +18,7 @@ baud, Modbus slave `0x01`. ILI9341 TFT + XPT2046 touch on SPI
 
 ```bash
 ~/.platformio/penv/bin/pio run            # firmware (default env: esp8266)
-~/.platformio/penv/bin/pio test -e native # 71 native gtest cases, must all pass
+~/.platformio/penv/bin/pio test -e native # 89 native gtest cases, must all pass
 ```
 
 Both must pass before any change is considered done. CI
@@ -43,8 +43,12 @@ Other tooling:
 - Keep decision logic **pure and testable**: anything with timing, arithmetic or
   policy goes in a dependency-free header under `src/` and gets native tests.
   Existing examples: `modbus/Crc16.h`, `modbus/RespCheck.h`,
-  `inverter/PassiveWriteCache.h`, `control/SaverAlgorithm.h`, `display/TouchCal.h`,
-  `util/Health.h`.
+  `inverter/PassiveWriteCache.h`, `inverter/TelemetrySchema.h`,
+  `control/SaverAlgorithm.h`, `display/TouchCal.h`,
+  `display/TouchGesture.h`, `util/Health.h`. End-to-end integration tests in
+  `test/test_logic/test_integration.cpp` also compile `Modbus.cpp`,
+  `Inverter.cpp`, `BatterySaver.cpp`, `ModeController.cpp` and `AppLog.cpp`
+  directly against `test/fakes/Arduino.h`.
 - Layering: `Modbus` (transport) → `Inverter` (registers/commands) →
   `BatterySaver` / `ModeController` (policy) → `MqttManager` / `SofarWebServer` /
   `Display` (presentation). `Display` knows nothing about EEPROM; it reports
@@ -104,7 +108,35 @@ Treat writes to `0x1187` as potentially wearing. Write on change only.
 
 ### Write-suppression policy
 
-- `BSAVE_MIN_DELTA` (100 W) hysteresis; runtime-tunable 20–2000 W.
+- **Option A first — Native HYD passive window (`[Blo=0, Bup=maxPower]`) with automatic fallback to Option B (`software loop`)**:
+  On the HYD G3, `0x1187..0x118C` takes `(Gdes=0, Blo=0, Bup=maxPower)`, which
+  lets the inverter's own DSP charge from solar surplus and prevent battery
+  discharge with **a single write when enabled and zero periodic writes all
+  day**. The old 3 s software accumulator loop was inherited from ME3000
+  `Sofar2mqtt`, which had no `[Blo, Bup]` window.
+  When `BatterySaver` is enabled, it writes `sendPassiveRange(0, _maxPower)` and
+  verifies the inverter stored the asymmetric window via `verifyPassiveRange()`
+  (reading back `0x1187..0x118C`). While in `BSAVE_NATIVE`, a closed-loop
+  behavioral check (`saverNativeShouldFallback()`) watches each fresh sample:
+  if the inverter either discharges `>300 W` or exports `>max(300, minDelta) W`
+  with `SOC < 95%` and `batteryPower < 100 W` for `BSAVE_NATIVE_FAIL_STREAK` (6)
+  consecutive samples, `BatterySaver` automatically falls back to `BSAVE_LOOP`
+  (Option B). Active strategy (`"native"` vs `"loop"`) is exposed in `/json`
+  (`bsave_strategy`) and the Web UI System cards.
+- `BSAVE_MIN_DELTA` (100 W) hysteresis in software-loop fallback mode;
+  runtime-tunable 20–2000 W.
+- **Sample-sequence gating (`saverIntegrateSample`)**: each `Inverter::readGridBlock()`
+  bumps `InverterData::sampleSeq`, and `BatterySaver::update()` integrates
+  `gridPower` at most once per `sampleSeq` so asynchronous timers can never
+  double-count a single grid reading.
+- **Declarative mode reconciliation (`ModeController::reconcile()`)**: static
+  modes (`auto`, `charge`, `standby`) reconcile through `sendPassiveRange()`,
+  and failed Modbus writes invalidate `_cmdCacheValid`, so commands lost to a
+  transient CRC glitch or issued while the inverter was asleep at boot are
+  retried automatically without causing duplicate writes on success.
+  `BatterySaver::disable()` does not write `0 W` on its own — `ModeController`
+  owns the transition so switching from `battery_saver` to `charge` or `auto`
+  issues one write instead of two.
 - Idle lapse: after `BSAVE_IDLE_LAPSE_MS` (10 min) at 0 W, writes stop entirely
   and passive mode is allowed to lapse (this is the overnight case).
 - Zero crossings always write.
@@ -131,21 +163,31 @@ legacy compatibility bytes at 199–200, tuning at 204–219, touch calibration 
   real `millis()` value at boot and at every wrap. Carry an explicit `bool`
   (`BatterySaver::_zeroTiming`, `HealthState::wifiDown`). Wraparound cases are
   unit-tested; add tests for any new timer.
-- **Never trust a length that arrived on the wire.** `Modbus::listen()` copies
-  into caller buffers as small as 2 bytes; `modbusPayloadLen()` validates the
-  claimed count against both the received frame and the destination capacity.
+- **Never trust a length or function code that arrived on the wire.**
+  `Modbus::listen()` verifies `fnCode == expectedFc` and, for `FC_READ_HOLDING`,
+  `modbusPayloadLen()` validates that `byteCnt` matches the exact requested byte
+  count (`count * 2`) as well as the received frame and destination capacity.
   `Inverter::readBlock` has a template overload that takes the capacity from
   the array type, so a buffer cannot be resized without its bound following.
   The realistic attack is not noise but **desync**: a late reply to a previous,
   larger request is a valid frame with a valid CRC.
+- **Tiered, fault-isolated Modbus polling (`inverterSlowPollDue`)**: fast
+  power-flow blocks (`Grid`, `PV`, `Battery`) run every poll and commit per
+  block; slow diagnostic/energy blocks (`System`, `BatteryTotals`, `Energy`,
+  `WorkingMode`) run every 6th cycle (30 s) and on link recovery, so a CRC
+  glitch in lifetime energy counters never drops live `gridPower`. Pre-TX bus
+  silence uses elapsed time since last activity (`modbusSilenceWaitMs`, 5 ms)
+  rather than an unconditional `delay(20)`.
 - **Bound every read loop in wall-clock time** (`MODBUS_LISTEN_BUDGET_MS`).
   Bytes addressed to another slave restart the first-byte timeout, so the loop
   can otherwise stall forever at `idx == 0`.
 - **Nothing on a repeating path may allocate.** Heap fragmentation kills this
   chip long before leaks do. The LCD log view and `/log` walk the `AppLog` ring
-  in place; `/json` and MQTT state stream straight to the socket; the SYS tab
-  formats the IP from octets rather than `toString()`. `AppLog::text()` was
-  deleted so it cannot be reintroduced.
+  in place; `/json`, all `/api/*` endpoints (`SofarWebServer::sendJson`), MQTT
+  state, and Home Assistant discovery (`publishRetainedJson`) stream straight to
+  the socket without intermediate `String`s; MQTT message handling uses a stack
+  buffer; the SYS tab formats the IP from octets rather than `toString()`.
+  `AppLog::text()` was deleted so it cannot be reintroduced.
 - `delay(1)` and `yield()` both feed the software and hardware watchdogs. A
   blocking network call is a responsiveness problem, not a reset — do not
   "fix" a watchdog bug that is not there.

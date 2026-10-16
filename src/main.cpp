@@ -72,8 +72,15 @@ void setup() {
     webServer.begin();
     MDNS.begin(eeConfig.name());
 
-    taskManager.scheduleFixedRate(INTERVAL_SENSORS,    []() { inverter.readSensors(); });
-    taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() { bsave.update(); });
+    taskManager.scheduleFixedRate(INTERVAL_POLL_STEP,  []() {
+        inverter.pollStep();
+        bsave.update();
+        control.reconcile();
+    });
+    taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() {
+        bsave.update();
+        control.reconcile();
+    });
     taskManager.scheduleFixedRate(INTERVAL_MQTT_PUB,   []() { mqttMgr.publish(); });
     taskManager.scheduleFixedRate(INTERVAL_MQTT_RETRY, []() {
         if (inverter.hasError()) return;

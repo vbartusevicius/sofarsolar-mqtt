@@ -48,7 +48,7 @@ private:
 
     static MqttManager* _instance;
     static void callbackTrampoline(char* topic, byte* payload, unsigned int len);
-    void handleMessage(const String& topic, const String& msg);
+    void handleMessage(const char* topic, const char* msg);
 };
 
 #endif

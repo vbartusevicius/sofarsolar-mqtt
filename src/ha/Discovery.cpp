@@ -1,6 +1,7 @@
 #include "Discovery.h"
 #include <ESP8266WiFi.h>
 #include <ArduinoJson.h>
+#include "inverter/TelemetrySchema.h"
 #include "Version.h"
 
 struct HaSensor {
@@ -11,93 +12,64 @@ struct HaSensor {
     const char* stateClass; // "measurement" | "total_increasing" | nullptr
 };
 
-#define S(i, n, u, dc, sc) { i, n, u, dc, sc }
+#define HA_INT_ROW(k, m, n, u, dc, sc)      { k, n, u, dc, sc },
+#define HA_FLT_ROW(k, m, dec, n, u, dc, sc) { k, n, u, dc, sc },
 
-// plain const (not PROGMEM): struct field reads would need memcpy_P
 static const HaSensor SENSORS[] = {
-    // System
-    S("run_state",       "Run State",            "",    nullptr,       "measurement"),
-    S("inverter_temp",   "Inverter Temperature", "°C",  "temperature", "measurement"),
-    S("heatsink_temp",   "Heatsink Temperature", "°C",  "temperature", "measurement"),
-    // Grid
-    S("grid_freq",       "Grid Frequency",       "Hz",  "frequency",   "measurement"),
-    S("inverter_power",  "Inverter Power",       "W",   "power",       "measurement"),
-    S("grid_power",      "Grid Power",           "W",   "power",       "measurement"),
-    S("grid_voltage",    "Grid Voltage",         "V",   "voltage",     "measurement"),
-    S("load_power",      "Load Power",           "W",   "power",       "measurement"),
-    // PV
-    S("pv1_voltage",     "PV1 Voltage",          "V",   "voltage",     "measurement"),
-    S("pv1_current",     "PV1 Current",          "A",   "current",     "measurement"),
-    S("pv1_power",       "PV1 Power",            "W",   "power",       "measurement"),
-    S("pv2_voltage",     "PV2 Voltage",          "V",   "voltage",     "measurement"),
-    S("pv2_current",     "PV2 Current",          "A",   "current",     "measurement"),
-    S("pv2_power",       "PV2 Power",            "W",   "power",       "measurement"),
-    S("pv_total",        "Solar Power Total",    "W",   "power",       "measurement"),
-    // Battery 1
-    S("batt_voltage",    "Battery Voltage",      "V",   "voltage",     "measurement"),
-    S("batt_current",    "Battery Current",      "A",   "current",     "measurement"),
-    S("batt_power",      "Battery Power",        "W",   "power",       "measurement"),
-    S("batt_temp",       "Battery Temperature",  "°C",  "temperature", "measurement"),
-    S("batt_soc",        "Battery SOC",          "%",   "battery",     "measurement"),
-    S("batt_soh",        "Battery SOH",          "%",   nullptr,       "measurement"),
-    S("batt_cycles",     "Battery Cycles",       "",    nullptr,       "measurement"),
-    // Battery 2
-    S("batt2_voltage",   "Battery 2 Voltage",    "V",   "voltage",     "measurement"),
-    S("batt2_current",   "Battery 2 Current",    "A",   "current",     "measurement"),
-    S("batt2_power",     "Battery 2 Power",      "W",   "power",       "measurement"),
-    S("batt2_temp",      "Battery 2 Temperature","°C",  "temperature", "measurement"),
-    S("batt2_soc",       "Battery 2 SOC",        "%",   "battery",     "measurement"),
-    S("batt2_soh",       "Battery 2 SOH",        "%",   nullptr,       "measurement"),
-    S("batt2_cycles",    "Battery 2 Cycles",     "",    nullptr,       "measurement"),
-    // Battery totals
-    S("batt_total_power","Battery Total Power",  "W",   "power",       "measurement"),
-    S("batt_avg_soc",    "Battery Avg SOC",      "%",   "battery",     "measurement"),
-    S("batt_avg_soh",    "Battery Avg SOH",      "%",   nullptr,       "measurement"),
-    // Energy counters
-    S("today_gen",       "PV Generation Today",    "kWh", "energy",      "total_increasing"),
-    S("total_gen",       "PV Generation Total",    "kWh", "energy",      "total_increasing"),
-    S("today_use",       "Consumption Today",      "kWh", "energy",      "total_increasing"),
-    S("total_use",       "Consumption Total",      "kWh", "energy",      "total_increasing"),
-    S("today_imp",       "Import Today",           "kWh", "energy",      "total_increasing"),
-    S("total_imp",       "Import Total",           "kWh", "energy",      "total_increasing"),
-    S("today_exp",       "Export Today",           "kWh", "energy",      "total_increasing"),
-    S("total_exp",       "Export Total",           "kWh", "energy",      "total_increasing"),
-    S("today_chg",       "Battery Charged Today",  "kWh", "energy",      "total_increasing"),
-    S("total_chg",       "Battery Charged Total",  "kWh", "energy",      "total_increasing"),
-    S("today_dis",       "Battery Discharged Today","kWh","energy",      "total_increasing"),
-    S("total_dis",       "Battery Discharged Total","kWh","energy",      "total_increasing"),
-    // Mode
-    S("working_mode",    "Working Mode",            "",   nullptr,       "measurement"),
-    S("battery_save_target","Battery Save Target",  "W",  "power",       "measurement"),
-    S("firmware",        "Firmware Version",        "",    nullptr,       nullptr),
+    SOFAR_TELEMETRY_INT_FIELDS(HA_INT_ROW)
+    SOFAR_TELEMETRY_FLOAT_FIELDS(HA_FLT_ROW)
+    { "battery_save_target", "Battery Save Target", "W", "power", "measurement" },
+    { "firmware",            "Firmware Version",    "",  nullptr, nullptr },
 };
+
+#undef HA_INT_ROW
+#undef HA_FLT_ROW
 
 static const uint8_t SENSOR_COUNT = sizeof(SENSORS) / sizeof(SENSORS[0]);
 
+static void publishRetainedJson(PubSubClient& mqtt, const char* topic,
+                                const JsonDocument& doc)
+{
+    size_t len = measureJson(doc);
+    if (mqtt.beginPublish(topic, len, true)) {
+        serializeJson(doc, mqtt);
+        mqtt.endPublish();
+    }
+    yield();
+}
+
 static void addDevice(JsonDocument& doc, const char* deviceName) {
-    String chipId = String(ESP.getChipId(), HEX);
+    char nodeId[24];
+    snprintf(nodeId, sizeof(nodeId), "sofar_%x", (unsigned)ESP.getChipId());
+    IPAddress ip = WiFi.localIP();
+    char cu[32];
+    snprintf(cu, sizeof(cu), "http://%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+
     JsonObject dev = doc["dev"].to<JsonObject>();
     JsonArray ids = dev["ids"].to<JsonArray>();
-    ids.add("sofar_" + chipId);
+    ids.add(nodeId);
     dev["name"] = deviceName;
     dev["mf"]   = "Sofar Solar";
     dev["mdl"]  = "HYD 20 KTL";
     dev["sw"]   = FW_VERSION;
-    dev["cu"]   = "http://" + WiFi.localIP().toString();
+    dev["cu"]   = cu;
 }
 
 static void publishSensor(PubSubClient& mqtt, const char* deviceName,
                           const HaSensor& s)
 {
-    String chipId = String(ESP.getChipId(), HEX);
-    String uid    = "sofar_" + chipId + "_" + s.id;
-    String topic  = "homeassistant/sensor/sofar_" + chipId + "/" + s.id + "/config";
+    unsigned chipId = (unsigned)ESP.getChipId();
+    char uid[48], topic[80], statT[80], valTpl[48];
+    snprintf(uid,    sizeof(uid),    "sofar_%x_%s", chipId, s.id);
+    snprintf(topic,  sizeof(topic),  "homeassistant/sensor/sofar_%x/%s/config", chipId, s.id);
+    snprintf(statT,  sizeof(statT),  "%s/state", deviceName);
+    snprintf(valTpl, sizeof(valTpl), "{{ value_json.%s }}", s.id);
 
     JsonDocument doc;
     doc["name"]    = s.name;
     doc["uniq_id"] = uid;
-    doc["stat_t"]  = String(deviceName) + "/state";
-    doc["val_tpl"] = "{{ value_json." + String(s.id) + " }}";
+    doc["stat_t"]  = statT;
+    doc["val_tpl"] = valTpl;
     if (s.unit && s.unit[0])
         doc["unit_of_meas"] = s.unit;
     if (s.devClass)
@@ -106,47 +78,47 @@ static void publishSensor(PubSubClient& mqtt, const char* deviceName,
         doc["stat_cla"] = s.stateClass;
     addDevice(doc, deviceName);
 
-    String payload;
-    serializeJson(doc, payload);
-    mqtt.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishRetainedJson(mqtt, topic, doc);
 }
 
 static void publishSwitch(PubSubClient& mqtt, const char* deviceName)
 {
-    String chipId = String(ESP.getChipId(), HEX);
-    String uid    = "sofar_" + chipId + "_battery_save";
-    String topic  = "homeassistant/switch/sofar_" + chipId + "/battery_save/config";
+    unsigned chipId = (unsigned)ESP.getChipId();
+    char uid[48], topic[80], statT[80], cmdT[80];
+    snprintf(uid,   sizeof(uid),   "sofar_%x_battery_save", chipId);
+    snprintf(topic, sizeof(topic), "homeassistant/switch/sofar_%x/battery_save/config", chipId);
+    snprintf(statT, sizeof(statT), "%s/state", deviceName);
+    snprintf(cmdT,  sizeof(cmdT),  "%s/set/battery_save", deviceName);
 
     JsonDocument doc;
     doc["name"]    = "Battery Saver";
     doc["uniq_id"] = uid;
-    doc["stat_t"]  = String(deviceName) + "/state";
+    doc["stat_t"]  = statT;
     doc["val_tpl"] = "{{ 'ON' if value_json.battery_save else 'OFF' }}";
-    doc["cmd_t"]   = String(deviceName) + "/set/battery_save";
+    doc["cmd_t"]   = cmdT;
     doc["pl_on"]   = "on";
     doc["pl_off"]  = "off";
     doc["icon"]    = "mdi:battery-sync";
     addDevice(doc, deviceName);
 
-    String payload;
-    serializeJson(doc, payload);
-    mqtt.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishRetainedJson(mqtt, topic, doc);
 }
 
 static void publishModeSelect(PubSubClient& mqtt, const char* deviceName)
 {
-    String chipId = String(ESP.getChipId(), HEX);
-    String uid    = "sofar_" + chipId + "_mode";
-    String topic  = "homeassistant/select/sofar_" + chipId + "/mode/config";
+    unsigned chipId = (unsigned)ESP.getChipId();
+    char uid[48], topic[80], statT[80], cmdT[80];
+    snprintf(uid,   sizeof(uid),   "sofar_%x_mode", chipId);
+    snprintf(topic, sizeof(topic), "homeassistant/select/sofar_%x/mode/config", chipId);
+    snprintf(statT, sizeof(statT), "%s/state", deviceName);
+    snprintf(cmdT,  sizeof(cmdT),  "%s/set/mode", deviceName);
 
     JsonDocument doc;
     doc["name"]    = "Inverter Mode";
     doc["uniq_id"] = uid;
-    doc["stat_t"]  = String(deviceName) + "/state";
+    doc["stat_t"]  = statT;
     doc["val_tpl"] = "{{ value_json.mode }}";
-    doc["cmd_t"]   = String(deviceName) + "/set/mode";
+    doc["cmd_t"]   = cmdT;
     JsonArray opts = doc["ops"].to<JsonArray>();
     opts.add("auto");
     opts.add("charge");
@@ -155,10 +127,7 @@ static void publishModeSelect(PubSubClient& mqtt, const char* deviceName)
     doc["icon"]    = "mdi:solar-power";
     addDevice(doc, deviceName);
 
-    String payload;
-    serializeJson(doc, payload);
-    mqtt.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishRetainedJson(mqtt, topic, doc);
 }
 
 static void publishNumber(PubSubClient& mqtt, const char* deviceName,
@@ -167,16 +136,20 @@ static void publishNumber(PubSubClient& mqtt, const char* deviceName,
                           const char* unit, const char* icon,
                           const char* cmdSuffix)
 {
-    String chipId = String(ESP.getChipId(), HEX);
-    String uid    = "sofar_" + chipId + "_" + id;
-    String topic  = "homeassistant/number/sofar_" + chipId + "/" + id + "/config";
+    unsigned chipId = (unsigned)ESP.getChipId();
+    char uid[48], topic[80], statT[80], valTpl[48], cmdT[80];
+    snprintf(uid,    sizeof(uid),    "sofar_%x_%s", chipId, id);
+    snprintf(topic,  sizeof(topic),  "homeassistant/number/sofar_%x/%s/config", chipId, id);
+    snprintf(statT,  sizeof(statT),  "%s/state", deviceName);
+    snprintf(valTpl, sizeof(valTpl), "{{ value_json.%s }}", id);
+    snprintf(cmdT,   sizeof(cmdT),   "%s%s", deviceName, cmdSuffix);
 
     JsonDocument doc;
     doc["name"]    = name;
     doc["uniq_id"] = uid;
-    doc["stat_t"]  = String(deviceName) + "/state";
-    doc["val_tpl"] = "{{ value_json." + String(id) + " }}";
-    doc["cmd_t"]   = String(deviceName) + cmdSuffix;
+    doc["stat_t"]  = statT;
+    doc["val_tpl"] = valTpl;
+    doc["cmd_t"]   = cmdT;
     doc["min"]     = minVal;
     doc["max"]     = maxVal;
     doc["step"]    = 100;
@@ -184,10 +157,7 @@ static void publishNumber(PubSubClient& mqtt, const char* deviceName,
     doc["icon"]    = icon;
     addDevice(doc, deviceName);
 
-    String payload;
-    serializeJson(doc, payload);
-    mqtt.publish(topic.c_str(), payload.c_str(), true);
-    yield();
+    publishRetainedJson(mqtt, topic, doc);
 }
 
 void publishHADiscovery(PubSubClient& mqtt, const char* deviceName) {

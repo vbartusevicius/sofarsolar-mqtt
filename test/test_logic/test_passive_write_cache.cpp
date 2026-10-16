@@ -51,3 +51,32 @@ TEST(PassiveWriteCache, KeepaliveZeroStillWritesOnChange) {
 TEST(PassiveWriteCache, KeepaliveZeroFirstWriteStillHappens) {
     EXPECT_TRUE(passiveWriteDue(false, 0, 0, 0, 0, 0, 0, 0));
 }
+
+TEST(SlowPollSchedule, RunsOnFirstCycleRecoveryAndEveryNthCycle) {
+    uint8_t tick = 0;
+    // First cycle (tick == 0) runs slow tier
+    EXPECT_TRUE(inverterSlowPollDue(false, tick, 6));
+    // Next 5 cycles skip slow tier
+    for (int i = 0; i < 5; i++) {
+        EXPECT_FALSE(inverterSlowPollDue(false, tick, 6)) << "i=" << i;
+    }
+    // 6th cycle runs slow tier again
+    EXPECT_TRUE(inverterSlowPollDue(false, tick, 6));
+    // Link recovery forces slow tier immediately and resets cadence
+    EXPECT_TRUE(inverterSlowPollDue(true, tick, 6));
+    EXPECT_FALSE(inverterSlowPollDue(false, tick, 6));
+}
+
+TEST(PollStepSequence, FastAndSlowCyclesStepCorrectly) {
+    // Fast-only cycle: GRID (0) -> PV (1) -> BATT (2) -> GRID (0)
+    EXPECT_EQ(inverterNextPollStep(POLL_GRID, false), POLL_PV);
+    EXPECT_EQ(inverterNextPollStep(POLL_PV,   false), POLL_BATT);
+    EXPECT_EQ(inverterNextPollStep(POLL_BATT, false), POLL_GRID);
+
+    // Slow cycle: GRID -> PV -> BATT -> SYS -> BATTTOT -> ENERGY -> WORKMODE -> GRID
+    EXPECT_EQ(inverterNextPollStep(POLL_BATT,     true), POLL_SYS);
+    EXPECT_EQ(inverterNextPollStep(POLL_SYS,      true), POLL_BATTTOT);
+    EXPECT_EQ(inverterNextPollStep(POLL_BATTTOT,  true), POLL_ENERGY);
+    EXPECT_EQ(inverterNextPollStep(POLL_ENERGY,   true), POLL_WORKMODE);
+    EXPECT_EQ(inverterNextPollStep(POLL_WORKMODE, true), POLL_GRID);
+}

@@ -59,7 +59,8 @@ struct InverterData {
     // Mode
     uint16_t workingMode   = 0;
 
-    bool valid = false;
+    uint32_t sampleSeq = 0;   // bumped on each fresh grid-power read
+    bool     valid     = false;
 };
 
 class Inverter {
@@ -67,9 +68,11 @@ public:
     explicit Inverter(Modbus& mb) : _mb(mb) {}
 
     bool readSensors();
+    bool pollStep();   // cooperative 1-block-per-tick state machine
     bool readSerialNumber();
     bool sendPassiveCommand(int32_t power);
     bool sendPassiveRange(int32_t minPower, int32_t maxPower);
+    bool verifyPassiveRange(int32_t expectedMin, int32_t expectedMax);
 
     // Identical passive commands are re-sent at most this often. 0 = never,
     // which is correct whenever the inverter's passive timeout is disabled.
@@ -82,6 +85,7 @@ public:
     uint16_t timeoutAction()   const { return _timeoutAction; }
 
     bool hasError() const              { return _error; }
+    bool isPassiveMode() const         { return _data.valid && _data.workingMode == WORK_MODE_PASSIVE; }
     const InverterData& data() const   { return _data; }
     const char* serialNumber() const   { return _sn; }
 
@@ -99,6 +103,18 @@ private:
     uint32_t      _keepaliveMs   = PASSIVE_KEEPALIVE_MS;
     uint16_t      _passiveTimeoutS = 0;   // 0x1184, 0 = disabled
     uint16_t      _timeoutAction   = 0;   // 0x1185, 0 = force standby
+    uint8_t       _slowTick        = 0;   // fast-poll counter for slow tier
+    uint8_t       _pollStep        = 0;
+    bool          _slowCycle       = true;
+    static constexpr uint8_t SLOW_POLL_DIV = 6;   // 6 fast cycles
+
+    bool readGridBlock();
+    bool readPvBlock();
+    bool readBattBlock();
+    bool readSysBlock();
+    bool readBattTotBlock();
+    bool readEnergyBlock();
+    bool readWorkModeBlock();
 
     bool readBlock(uint16_t start, uint8_t count, uint8_t* buf, uint8_t cap,
                    uint8_t& sz);

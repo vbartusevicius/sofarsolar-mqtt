@@ -1,6 +1,7 @@
 #include "BatterySaver.h"
 #include "Config.h"
 #include "SaverAlgorithm.h"
+#include "util/AppLog.h"
 
 static int32_t clampI32(int32_t v, int32_t lo, int32_t hi) {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -18,38 +19,84 @@ void BatterySaver::setIdleLapse(uint32_t ms) {
     _idleLapseMs = ms < 60000UL ? 60000UL : (ms > 3600000UL ? 3600000UL : ms);
 }
 
+const char* BatterySaver::strategyName() const {
+    if (!_active) return "off";
+    switch (_strategy) {
+    case BSAVE_PROBING: return "probing";
+    case BSAVE_NATIVE:  return "native";
+    case BSAVE_LOOP:    return "loop";
+    }
+    return "off";
+}
+
 void BatterySaver::enable() {
-    _active      = true;
-    _targetPower = 0;
-    // Force the first update() to write, whatever the inverter cache holds
-    _lastSentTarget = -1;
-    _lastSentAt     = 0;
-    _zeroTiming     = false;
+    _active           = true;
+    _targetPower      = 0;
+    _lastSentTarget   = -1;
+    _lastSentAt       = 0;
+    _zeroTiming       = false;
+    _lastSampleSeq    = 0;
+    _strategy         = BSAVE_PROBING;
+    _nativeFailStreak = 0;
 }
 
 void BatterySaver::disable() {
     _active      = false;
     _targetPower = 0;
-    // Return inverter to standby so it stops forced-charge
-    _inv.sendPassiveCommand(0);
 }
 
 void BatterySaver::toggle() {
     _active ? disable() : enable();
 }
 
-// Charges the battery from excess solar: grid export raises the charge
-// target, import lowers it (clamped so the battery never discharges).
-// Write-suppression policy lives in SaverAlgorithm.h.
+// Option A (preferred): write the native [Blo=0, Bup=_maxPower] window once so
+// the inverter's own DSP tracks 0 W grid power without periodic RS485 writes.
+// Verified by reading back 0x1187..0x118C and watching live power flow; if
+// either check fails, falls back to Option B (the software accumulator loop).
 void BatterySaver::update() {
     if (!_active) return;
 
     const InverterData& d = _inv.data();
     if (!d.valid) return;
 
+    if (_strategy == BSAVE_PROBING) {
+        if (!_inv.sendPassiveRange(0, _maxPower)) return;
+        if (_inv.verifyPassiveRange(0, _maxPower)) {
+            _strategy         = BSAVE_NATIVE;
+            _targetPower      = _maxPower;
+            _lastSampleSeq    = d.sampleSeq;
+            _nativeFailStreak = 0;
+            appLog.add("BSV", "native [0..max] window verified");
+            return;
+        }
+        _strategy       = BSAVE_LOOP;
+        _targetPower    = 0;
+        _lastSentTarget = -1;
+        _lastSampleSeq  = 0;
+        appLog.add("BSV", "native window readback failed, using software loop");
+    }
+
+    if (_strategy == BSAVE_NATIVE) {
+        // Re-asserts only if _maxPower changed in Web UI or keep-alive is due
+        _inv.sendPassiveRange(0, _maxPower);
+        _targetPower = _maxPower;
+        if (saverNativeShouldFallback(d.gridPower, d.batteryPower, d.batterySOC,
+                                      _maxPower, _minDelta, d.sampleSeq,
+                                      _lastSampleSeq, _nativeFailStreak)) {
+            _strategy       = BSAVE_LOOP;
+            _targetPower    = 0;
+            _lastSentTarget = -1;
+            _lastSampleSeq  = 0;
+            appLog.add("BSV", "native window not tracking, fallback to loop");
+        } else {
+            return;
+        }
+    }
+
     unsigned long now = millis();
 
-    _targetPower = saverAccumulateTarget(_targetPower, d.gridPower, _maxPower);
+    _targetPower = saverIntegrateSample(_targetPower, d.gridPower, _maxPower,
+                                        d.sampleSeq, _lastSampleSeq);
 
     if (_targetPower == 0) {
         if (!_zeroTiming) { _zeroTiming = true; _zeroStart = now; }

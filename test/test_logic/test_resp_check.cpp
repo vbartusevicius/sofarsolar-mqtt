@@ -42,3 +42,19 @@ TEST(RespCheck, ExpectedFrameRejectsOverflow) {
     EXPECT_EQ(modbusExpectedFrame(255, 128), 0);
     EXPECT_EQ(modbusExpectedFrame(0, 128), 0);
 }
+
+// A late 2-byte response must not satisfy a request that asked for 6 bytes,
+// even when the caller buffer is large enough for both.
+TEST(RespCheck, RejectsMismatchedExpectedByteCount) {
+    EXPECT_EQ(modbusPayloadLen(2, 7, 12, 6), 0);
+    EXPECT_EQ(modbusPayloadLen(6, 11, 12, 6), 6);
+}
+
+TEST(RespCheck, SilenceWaitCalculatesRemainingGapAndWraparound) {
+    EXPECT_EQ(modbusSilenceWaitMs(false, 100, 100, 5), 0u);
+    EXPECT_EQ(modbusSilenceWaitMs(true, 102, 100, 5), 3u);
+    EXPECT_EQ(modbusSilenceWaitMs(true, 105, 100, 5), 0u);
+    EXPECT_EQ(modbusSilenceWaitMs(true, 200, 100, 5), 0u);
+    // Across millis() wraparound: 2 ms elapsed -> 3 ms remaining
+    EXPECT_EQ(modbusSilenceWaitMs(true, 1, UINT32_MAX, 5), 3u);
+}

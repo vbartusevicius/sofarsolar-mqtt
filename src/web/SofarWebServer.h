@@ -2,6 +2,7 @@
 #define SOFAR_WEB_SERVER_H
 
 #include <ESP8266WebServer.h>
+#include <ArduinoJson.h>
 
 class EEConfig;
 class Inverter;
@@ -28,6 +29,7 @@ private:
     Display&         _disp;
 
     void handleFirmwareUpload();
+    void sendJson(const JsonDocument& doc);
 };
 
 #endif

@@ -86,12 +86,14 @@
 #define REG_SN_COUNT       8        // 0x0445-0x044C
 // Control
 #define REG_WORKING_MODE   0x1110
+#define WORK_MODE_PASSIVE  3        // 0x1110 == 3 is Passive Mode
 #define REG_PASSIVE_CTRL   0x1187   // Write 6 regs (3×32-bit): PPC, min, max
 #define REG_PASSIVE_TIMEOUT 0x1184  // U16 seconds, 0 = disabled (factory default)
 #define REG_PASSIVE_TMO_ACT 0x1185  // 0 = force standby, 1 = previous mode
 
 #define INTERVAL_BSAVE     3000
 #define INTERVAL_SENSORS   5000
+#define INTERVAL_POLL_STEP 1000     // 1 Modbus block per tick (~50 ms max stall)
 #define INTERVAL_DISPLAY   1000
 #define INTERVAL_MQTT_PUB  10000
 #define INTERVAL_MQTT_RETRY 30000

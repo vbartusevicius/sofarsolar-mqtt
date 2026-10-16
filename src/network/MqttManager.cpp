@@ -3,6 +3,7 @@
 #include "util/HeapStats.h"
 #include "config/EEConfig.h"
 #include "inverter/Inverter.h"
+#include "inverter/TelemetrySchema.h"
 #include "control/BatterySaver.h"
 #include "control/ModeController.h"
 #include "ha/Discovery.h"
@@ -18,30 +19,38 @@ MqttManager::MqttManager(EEConfig& cfg, Inverter& inv,
     _instance = this;
 }
 
+static bool endsWith(const char* str, const char* suffix) {
+    size_t slen = strlen(str), xlen = strlen(suffix);
+    return slen >= xlen && strcmp(str + slen - xlen, suffix) == 0;
+}
+
 void MqttManager::callbackTrampoline(char* topic, byte* payload,
                                      unsigned int len)
 {
-    if (!_instance) return;
-    String msg;
-    msg.reserve(len);
-    for (unsigned int i = 0; i < len; i++) msg += (char)payload[i];
-    _instance->handleMessage(String(topic), msg);
+    if (!_instance || !topic) return;
+    char msg[64];
+    unsigned int copyLen = len < sizeof(msg) - 1 ? len : sizeof(msg) - 1;
+    if (copyLen > 0 && payload) memcpy(msg, payload, copyLen);
+    msg[copyLen] = '\0';
+    _instance->handleMessage(topic, msg);
 }
 
-void MqttManager::handleMessage(const String& topic, const String& msg) {
-    if (topic.endsWith("/ping")) {
-        uint32_t seq = (uint32_t)msg.toInt();
+void MqttManager::handleMessage(const char* topic, const char* msg) {
+    if (endsWith(topic, "/ping")) {
+        uint32_t seq = (uint32_t)strtoul(msg, nullptr, 10);
         if ((uint32_t)(seq - _echoSeq) < 0x80000000UL) _echoSeq = seq;
         return;
     }
-    if (topic.endsWith("/set/battery_save")) {
-        if (msg == "on" || msg == "true" || msg == "1")  _ctrl.setMode("battery_saver");
-        else if (_bs.isActive())                          _ctrl.setMode("auto");
+    if (endsWith(topic, "/set/battery_save")) {
+        bool on = strcmp(msg, "on") == 0 || strcmp(msg, "true") == 0 ||
+                  strcmp(msg, "1") == 0;
+        if (on)                  _ctrl.setMode("battery_saver");
+        else if (_bs.isActive()) _ctrl.setMode("auto");
     }
-    else if (topic.endsWith("/set/charge"))  { _ctrl.setCharge(msg.toInt()); }
-    else if (topic.endsWith("/set/standby")) { _ctrl.setMode("standby"); }
-    else if (topic.endsWith("/set/auto"))    { _ctrl.setAuto(msg.toInt()); }
-    else if (topic.endsWith("/set/mode"))    { _ctrl.setMode(msg.c_str()); }
+    else if (endsWith(topic, "/set/charge"))  { _ctrl.setCharge(atol(msg)); }
+    else if (endsWith(topic, "/set/standby")) { _ctrl.setMode("standby"); }
+    else if (endsWith(topic, "/set/auto"))    { _ctrl.setAuto(atol(msg)); }
+    else if (endsWith(topic, "/set/mode"))    { _ctrl.setMode(msg); }
 }
 
 void MqttManager::begin() {
@@ -165,61 +174,17 @@ void MqttManager::fillState(JsonDocument& doc) {
     const InverterData& d = _inv.data();
     char fb[16];
 
-    // System
-    doc["run_state"]      = d.runState;
-    doc["inverter_temp"]  = d.inverterTemp;
-    doc["heatsink_temp"]  = d.heatsinkTemp;
-    // Grid
-    doc["grid_freq"]      = serialized(dtostrf(d.gridFreq, 0, 2, fb));
-    doc["inverter_power"] = d.inverterPower;
-    doc["grid_power"]     = d.gridPower;
-    doc["grid_voltage"]   = serialized(dtostrf(d.gridVoltage, 0, 1, fb));
-    doc["load_power"]     = d.loadPower;
-    // PV
-    doc["pv1_voltage"]    = serialized(dtostrf(d.pv1Voltage, 0, 1, fb));
-    doc["pv1_current"]    = serialized(dtostrf(d.pv1Current, 0, 2, fb));
-    doc["pv1_power"]      = d.pv1Power;
-    doc["pv2_voltage"]    = serialized(dtostrf(d.pv2Voltage, 0, 1, fb));
-    doc["pv2_current"]    = serialized(dtostrf(d.pv2Current, 0, 2, fb));
-    doc["pv2_power"]      = d.pv2Power;
-    doc["pv_total"]       = d.pvPower;
-    // Battery 1
-    doc["batt_voltage"]   = serialized(dtostrf(d.battVoltage, 0, 1, fb));
-    doc["batt_current"]   = serialized(dtostrf(d.battCurrent, 0, 2, fb));
-    doc["batt_power"]     = d.batteryPower;
-    doc["batt_temp"]      = d.battTemp;
-    doc["batt_soc"]       = d.batterySOC;
-    doc["batt_soh"]       = d.battSOH;
-    doc["batt_cycles"]    = d.battCycles;
-    // Battery 2
-    doc["batt2_voltage"]  = serialized(dtostrf(d.batt2Voltage, 0, 1, fb));
-    doc["batt2_current"]  = serialized(dtostrf(d.batt2Current, 0, 2, fb));
-    doc["batt2_power"]    = d.batt2Power;
-    doc["batt2_temp"]     = d.batt2Temp;
-    doc["batt2_soc"]      = d.batt2SOC;
-    doc["batt2_soh"]      = d.batt2SOH;
-    doc["batt2_cycles"]   = d.batt2Cycles;
-    // Battery totals
-    doc["batt_total_power"] = d.battTotalPower;
-    doc["batt_avg_soc"]   = d.battAvgSOC;
-    doc["batt_avg_soh"]   = d.battAvgSOH;
-    // Energy
-    doc["today_gen"]      = serialized(dtostrf(d.todayGeneration, 0, 2, fb));
-    doc["total_gen"]      = serialized(dtostrf(d.totalGeneration, 0, 1, fb));
-    doc["today_use"]      = serialized(dtostrf(d.todayConsumption, 0, 2, fb));
-    doc["total_use"]      = serialized(dtostrf(d.totalConsumption, 0, 1, fb));
-    doc["today_imp"]      = serialized(dtostrf(d.todayImport, 0, 2, fb));
-    doc["total_imp"]      = serialized(dtostrf(d.totalImport, 0, 1, fb));
-    doc["today_exp"]      = serialized(dtostrf(d.todayExport, 0, 2, fb));
-    doc["total_exp"]      = serialized(dtostrf(d.totalExport, 0, 1, fb));
-    doc["today_chg"]      = serialized(dtostrf(d.todayCharged, 0, 2, fb));
-    doc["total_chg"]      = serialized(dtostrf(d.totalCharged, 0, 1, fb));
-    doc["today_dis"]      = serialized(dtostrf(d.todayDischarged, 0, 2, fb));
-    doc["total_dis"]      = serialized(dtostrf(d.totalDischarged, 0, 1, fb));
+#define FILL_INT_FIELD(k, m, n, u, dc, sc)      doc[k] = d.m;
+#define FILL_FLT_FIELD(k, m, dec, n, u, dc, sc) doc[k] = serialized(dtostrf(d.m, 0, dec, fb));
+    SOFAR_TELEMETRY_INT_FIELDS(FILL_INT_FIELD)
+    SOFAR_TELEMETRY_FLOAT_FIELDS(FILL_FLT_FIELD)
+#undef FILL_INT_FIELD
+#undef FILL_FLT_FIELD
+
     // Mode & control
-    doc["working_mode"]        = d.workingMode;
     doc["battery_save"]        = _bs.isActive();
     doc["battery_save_target"] = _bs.targetPower();
+    doc["bsave_strategy"]      = _bs.strategyName();
     // Control state
     doc["mode"]          = _ctrl.currentMode();
     doc["charge_power"]  = _ctrl.chargePower();
@@ -228,6 +193,7 @@ void MqttManager::fillState(JsonDocument& doc) {
     doc["serial_number"] = _inv.serialNumber();
     doc["firmware"]      = FW_VERSION;
     doc["modbus_ok"]     = !_inv.hasError();
+    doc["passive_mode_ok"] = _inv.isPassiveMode();
     doc["mqtt_ok"]       = _mqtt.connected();
     doc["wifi_ok"]       = WiFi.isConnected();
     doc["uptime"]        = millis();

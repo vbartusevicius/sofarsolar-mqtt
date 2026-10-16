@@ -1,4 +1,5 @@
 #include "control/ModeController.h"
+#include "control/SaverAlgorithm.h"
 #include "util/AppLog.h"
 
 void ModeController::setModeName(const char* name) {
@@ -14,9 +15,7 @@ void ModeController::persist() {
 }
 
 void ModeController::toggleBatterySaver() {
-    _bs.toggle();
-    setModeName(_bs.isActive() ? "battery_saver" : "standby");
-    persist();
+    setMode(_bs.isActive() ? "standby" : "battery_saver");
 }
 
 void ModeController::restore() {
@@ -26,6 +25,14 @@ void ModeController::restore() {
     snprintf(lb, sizeof(lb), "Restoring mode '%s'", _cfg.mode());
     appLog.add("CTL", lb);
     setMode(_cfg.mode());
+}
+
+void ModeController::reconcile() {
+    if (_inv.hasError()) return;
+    int32_t minP = 0, maxP = 0;
+    if (modeDesiredPassiveRange(_mode, _chargePower, _autoLimit, minP, maxP)) {
+        _inv.sendPassiveRange(minP, maxP);
+    }
 }
 
 void ModeController::setMode(const char* mode) {
@@ -39,11 +46,13 @@ void ModeController::setMode(const char* mode) {
         setModeName("charge");
     }
     else if (strcmp(mode, "standby") == 0) {
-        _bs.disable();   // disable() returns the inverter to standby
+        _bs.disable();
+        _inv.sendPassiveCommand(0);
         setModeName("standby");
     }
     else if (strcmp(mode, "auto") == 0) {
         setAuto(_autoLimit);
+        return;
     }
     else {
         char lb[48];

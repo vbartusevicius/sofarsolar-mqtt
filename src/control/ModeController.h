@@ -15,6 +15,10 @@ public:
     // is up, since restoring a mode means commanding the inverter.
     void restore();
 
+    // Ensures static modes (auto, charge, standby) reach the inverter if the
+    // initial write failed or happened while the inverter was asleep.
+    void reconcile();
+
     void setMode(const char* mode);
     void setCharge(int32_t watts);
     void setAuto(int32_t limit);

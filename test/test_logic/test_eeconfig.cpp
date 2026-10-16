@@ -127,7 +127,7 @@ TEST_F(EEConfigTest, ModeChangeCommitsOnce) {
 // Longer names must be truncated, never overflow the 16-byte field.
 TEST_F(EEConfigTest, ModeNameIsTruncatedNotOverflowed) {
     cfg.setMode("a_very_long_mode_name_that_does_not_fit");
-    EXPECT_EQ(strlen(cfg.mode()), EE_MODE_LEN - 1);
+    EXPECT_EQ(strlen(cfg.mode()), (size_t)(EE_MODE_LEN - 1));
     cfg.save();
     EEConfig fresh;
     ASSERT_TRUE(fresh.load());

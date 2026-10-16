@@ -14,10 +14,15 @@ public:
                        const uint8_t* payload, uint8_t payloadLen);
 
 private:
-    static constexpr uint8_t MAX_RESP = MODBUS_MAX_FRAME;
+    static constexpr uint8_t  MAX_RESP       = MODBUS_MAX_FRAME;
+    static constexpr uint32_t MIN_SILENCE_MS = 5;   // >3.5 chars at 9600 baud
+
+    unsigned long _lastBusAt   = 0;
+    bool          _hadActivity = false;
 
     void flush();
-    int  listen(uint8_t slaveId, uint8_t* frame, uint8_t& frameSize,
+    int  listen(uint8_t slaveId, uint8_t expectedFc, uint8_t expectedBytes,
+                uint8_t* frame, uint8_t& frameSize,
                 uint8_t* data, uint8_t dataCap, uint8_t& dataSize);
     void calcCRC(uint8_t* frame, uint8_t len);
     bool checkCRC(const uint8_t* frame, uint8_t len) const;

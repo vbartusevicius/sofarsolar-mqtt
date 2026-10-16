@@ -138,6 +138,8 @@ if(d.free_heap!==undefined)sh+='<div class="card"><div class="l">FREE HEAP</div>
 if(d.max_free_block!==undefined)sh+='<div class="card"><div class="l">MAX BLOCK</div><div class="v w">'+d.max_free_block+'</div></div>';
 if(d.heap_frag!==undefined)sh+='<div class="card"><div class="l">HEAP FRAG</div><div class="v '+(d.heap_frag>40?'r':'g')+'">'+d.heap_frag+'%</div></div>';
 if(d.uptime!==undefined){var ut=Math.floor(d.uptime/1000);var uh=Math.floor(ut/3600);var um=Math.floor((ut%3600)/60);sh+='<div class="card"><div class="l">UPTIME</div><div class="v w">'+uh+'h '+um+'m</div></div>';}
+if(d.passive_mode_ok!==undefined)sh+='<div class="card"><div class="l">PASSIVE MODE</div><div class="v '+(d.passive_mode_ok?'g':'r')+'">'+(d.passive_mode_ok?'ACTIVE':'OFF ('+d.working_mode+')')+'</div></div>';
+if(d.bsave_strategy!==undefined)sh+='<div class="card"><div class="l">SAVER STRATEGY</div><div class="v '+(d.bsave_strategy==='native'?'g':(d.bsave_strategy==='loop'?'y':'w'))+'">'+d.bsave_strategy.toUpperCase()+'</div></div>';
 if(d.passive_timeout_s!==undefined)sh+='<div class="card"><div class="l">PASSIVE TIMEOUT</div><div class="v '+(d.passive_timeout_s?'y':'g')+'">'+(d.passive_timeout_s?d.passive_timeout_s+' s':'off')+'</div></div>';
 if(d.timeout_action!==undefined&&d.passive_timeout_s)sh+='<div class="card"><div class="l">TIMEOUT ACTION</div><div class="v w">'+(d.timeout_action?'prev mode':'standby')+'</div></div>';
 if(d.keepalive_s!==undefined)sh+='<div class="card"><div class="l">KEEP-ALIVE</div><div class="v '+(d.keepalive_s?'y':'g')+'">'+(d.keepalive_s?d.keepalive_s+' s':'none')+'</div></div>';

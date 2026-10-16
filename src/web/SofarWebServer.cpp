@@ -20,6 +20,12 @@ SofarWebServer::SofarWebServer(EEConfig& cfg, Inverter& inv,
       _disp(disp)
 {}
 
+void SofarWebServer::sendJson(const JsonDocument& doc) {
+    _server.setContentLength(measureJson(doc));
+    _server.send(200, "application/json", "");
+    serializeJson(doc, _server.client());
+}
+
 void SofarWebServer::begin() {
     _server.on("/", [this]() {
         _server.send_P(200, "text/html", PAGE_HTML);
@@ -30,9 +36,7 @@ void SofarWebServer::begin() {
     _server.on("/json", [this]() {
         JsonDocument doc;
         _mqtt.fillState(doc);
-        _server.setContentLength(measureJson(doc));
-        _server.send(200, "application/json", "");
-        serializeJson(doc, _server.client());
+        sendJson(doc);
     });
 
     _server.on("/settings", [this]() {
@@ -51,9 +55,7 @@ void SofarWebServer::begin() {
         doc["timeoutAction"]   = _inv.timeoutAction();
         doc["keepaliveS"]      = _inv.keepaliveMs() / 1000;
         doc["idleLapseMin"]  = _bs.idleLapseMs() / 60000;
-        _server.setContentLength(measureJson(doc));
-        _server.send(200, "application/json", "");
-        serializeJson(doc, _server.client());
+        sendJson(doc);
     });
 
     _server.on("/command", [this]() {
@@ -74,18 +76,14 @@ void SofarWebServer::begin() {
         _ctrl.toggleBatterySaver();
         JsonDocument doc;
         doc["battery_save"] = _bs.isActive();
-        String out;
-        serializeJson(doc, out);
-        _server.send(200, "application/json", out);
+        sendJson(doc);
     });
 
     _server.on("/api/mode", [this]() {
         if (_server.hasArg("v")) _ctrl.setMode(_server.arg("v").c_str());
         JsonDocument doc;
         doc["mode"] = _ctrl.currentMode();
-        String out;
-        serializeJson(doc, out);
-        _server.send(200, "application/json", out);
+        sendJson(doc);
     });
 
     _server.on("/api/charge", [this]() {
@@ -93,9 +91,7 @@ void SofarWebServer::begin() {
         JsonDocument doc;
         doc["charge_power"] = _ctrl.chargePower();
         doc["mode"] = _ctrl.currentMode();
-        String out;
-        serializeJson(doc, out);
-        _server.send(200, "application/json", out);
+        sendJson(doc);
     });
 
     _server.on("/api/auto", [this]() {
@@ -103,9 +99,7 @@ void SofarWebServer::begin() {
         JsonDocument doc;
         doc["auto_limit"] = _ctrl.autoLimit();
         doc["mode"] = _ctrl.currentMode();
-        String out;
-        serializeJson(doc, out);
-        _server.send(200, "application/json", out);
+        sendJson(doc);
     });
 
     // applies immediately, no reboot; save() commits only on real changes
@@ -120,9 +114,7 @@ void SofarWebServer::begin() {
         doc["bsMaxPower"]   = _bs.maxPower();
         doc["keepaliveS"]   = _inv.keepaliveMs() / 1000;
         doc["idleLapseMin"] = _bs.idleLapseMs() / 60000;
-        String out;
-        serializeJson(doc, out);
-        _server.send(200, "application/json", out);
+        sendJson(doc);
     });
 
     // Starts the on-screen wizard; the result is persisted by the callback

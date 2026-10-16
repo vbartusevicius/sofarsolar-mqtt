@@ -1,6 +1,7 @@
 #include "Display.h"
 #include <ESP8266WiFi.h>
 #include <Fonts/Picopixel.h>
+#include "display/TouchGesture.h"
 #include "Config.h"
 #include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
@@ -558,10 +559,10 @@ bool Display::pollTouch() {
     if (now - _lastPollAt < TS_POLL_MS) return false;
     _lastPollAt = now;
 
-    bool contact = _ts.touched();
-    if (contact) _lastDownAt = now;
-    bool down = contact ||
-                (_touchedPrev && now - _lastDownAt < TS_RELEASE_MS);
+    uint32_t lastDown = (uint32_t)_lastDownAt;
+    bool down = touchDebouncedDown(_ts.touched(), _touchedPrev, (uint32_t)now,
+                                   lastDown);
+    _lastDownAt = lastDown;
 
     if (calibrating()) return calPollTouch(down, now);
 

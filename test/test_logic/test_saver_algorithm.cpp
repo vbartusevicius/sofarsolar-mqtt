@@ -100,3 +100,73 @@ TEST(SaverShouldSend, KeepaliveZeroStillSendsOnChange) {
     EXPECT_TRUE(saverShouldSend(0, 1000, 100000, 0, false, 0,
                                 MIN_DELTA, 0, LAPSE));
 }
+
+// A single sensor reading (same sampleSeq) must never be integrated twice when
+// BatterySaver::update() runs between sensor polls.
+TEST(SaverIntegrateSample, IntegratesEachSampleAtMostOnce) {
+    uint32_t lastSeq = 0;
+    int32_t target = 1000;
+    // Sample #1 (+300 W export) arrives
+    target = saverIntegrateSample(target, 300, 20000, 1, lastSeq);
+    EXPECT_EQ(target, 1300);
+    EXPECT_EQ(lastSeq, 1u);
+    // update() called again before next sensor read -> no double count
+    target = saverIntegrateSample(target, 300, 20000, 1, lastSeq);
+    EXPECT_EQ(target, 1300);
+    // Sample #2 (+200 W export) arrives -> integrated once
+    target = saverIntegrateSample(target, 200, 20000, 2, lastSeq);
+    EXPECT_EQ(target, 1500);
+    EXPECT_EQ(lastSeq, 2u);
+}
+
+TEST(SaverIntegrateSample, IgnoresUninitializedSampleZero) {
+    uint32_t lastSeq = 0;
+    EXPECT_EQ(saverIntegrateSample(500, 400, 20000, 0, lastSeq), 500);
+    EXPECT_EQ(lastSeq, 0u);
+}
+
+TEST(ModeReconcile, MapsStaticModesAndSkipsDynamic) {
+    int32_t lo = -1, hi = -1;
+    EXPECT_TRUE(modeDesiredPassiveRange("charge", 3500, 16384, lo, hi));
+    EXPECT_EQ(lo, 3500);
+    EXPECT_EQ(hi, 3500);
+
+    EXPECT_TRUE(modeDesiredPassiveRange("standby", 3500, 16384, lo, hi));
+    EXPECT_EQ(lo, 0);
+    EXPECT_EQ(hi, 0);
+
+    EXPECT_TRUE(modeDesiredPassiveRange("auto", 3500, 8000, lo, hi));
+    EXPECT_EQ(lo, -8000);
+    EXPECT_EQ(hi, 8000);
+
+    EXPECT_FALSE(modeDesiredPassiveRange("battery_saver", 3500, 8000, lo, hi));
+    EXPECT_FALSE(modeDesiredPassiveRange("unknown", 3500, 8000, lo, hi));
+}
+
+TEST(NativeWindowCheck, DetectsUncommandedDischargeAndIgnoredSurplus) {
+    // Healthy: grid near 0, battery charging 1500 W at 60% SOC
+    EXPECT_FALSE(saverNativeWindowViolated(40, 1500, 60, 20000, 100));
+    // Violation 1: discharging > 300 W despite Blo = 0
+    EXPECT_TRUE(saverNativeWindowViolated(0, -450, 60, 20000, 100));
+    // Violation 2: exporting 600 W while SOC < 95% and battery not charging
+    EXPECT_TRUE(saverNativeWindowViolated(600, 0, 60, 20000, 100));
+    // Not a violation when battery is already nearly full (SOC >= 95%)
+    EXPECT_FALSE(saverNativeWindowViolated(600, 0, 96, 20000, 100));
+}
+
+TEST(NativeWindowCheck, FallbackRequiresConsecutiveSampleViolations) {
+    uint32_t lastSeq = 0;
+    uint8_t streak = 0;
+    for (uint32_t seq = 1; seq < BSAVE_NATIVE_FAIL_STREAK; seq++) {
+        EXPECT_FALSE(saverNativeShouldFallback(600, 0, 60, 20000, 100,
+                                               seq, lastSeq, streak));
+    }
+    // Same sampleSeq repeated must not advance streak
+    EXPECT_FALSE(saverNativeShouldFallback(600, 0, 60, 20000, 100,
+                                           BSAVE_NATIVE_FAIL_STREAK - 1,
+                                           lastSeq, streak));
+    // 6th fresh violating sample triggers fallback to Option B
+    EXPECT_TRUE(saverNativeShouldFallback(600, 0, 60, 20000, 100,
+                                          BSAVE_NATIVE_FAIL_STREAK,
+                                          lastSeq, streak));
+}
