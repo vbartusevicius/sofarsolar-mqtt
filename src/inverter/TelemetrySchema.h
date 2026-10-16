@@ -9,10 +9,11 @@
 
 #define SOFAR_TELEMETRY_INT_FIELDS(X) \
     X("run_state",        runState,       "Run State",            "",   nullptr,       "measurement") \
-    X("inverter_temp",    inverterTemp,   "Inverter Temperature", "°C", "temperature", "measurement") \
-    X("heatsink_temp",    heatsinkTemp,   "Heatsink Temperature", "°C", "temperature", "measurement") \
-    X("inverter_power",   inverterPower,  "Inverter Power",       "W",  "power",       "measurement") \
-    X("grid_power",       gridPower,      "Grid Power",           "W",  "power",       "measurement") \
+    X("inverter_temp",    inverterTemp,      "Inverter Temperature", "°C", "temperature", "measurement") \
+    X("heatsink_temp",    heatsinkTemp,      "Heatsink Temperature", "°C", "temperature", "measurement") \
+    X("inverter_power",   inverterPower,     "Inverter Power",       "W",  "power",       "measurement") \
+    X("inverter_self_w",  inverterSelfPower, "Inverter Self Power",  "W",  "power",       "measurement") \
+    X("grid_power",       gridPower,         "Grid Power",           "W",  "power",       "measurement") \
     X("load_power",       loadPower,      "Load Power",           "W",  "power",       "measurement") \
     X("pv1_power",        pv1Power,       "PV1 Power",            "W",  "power",       "measurement") \
     X("pv2_power",        pv2Power,       "PV2 Power",            "W",  "power",       "measurement") \
@@ -33,9 +34,11 @@
     X("working_mode",     workingMode,    "Working Mode",         "",   nullptr,       "measurement")
 
 #define SOFAR_TELEMETRY_FLOAT_FIELDS(X) \
-    X("grid_freq",     gridFreq,         2, "Grid Frequency",           "Hz",  "frequency", "measurement") \
-    X("grid_voltage",  gridVoltage,      1, "Grid Voltage",             "V",   "voltage",   "measurement") \
-    X("pv1_voltage",   pv1Voltage,       1, "PV1 Voltage",              "V",   "voltage",   "measurement") \
+    X("grid_freq",       gridFreq,         2, "Grid Frequency",           "Hz",  "frequency", "measurement") \
+    X("grid_voltage",    gridVoltage,      1, "Grid Voltage L1",          "V",   "voltage",   "measurement") \
+    X("grid_voltage_l2", gridVoltageL2,    1, "Grid Voltage L2",          "V",   "voltage",   "measurement") \
+    X("grid_voltage_l3", gridVoltageL3,    1, "Grid Voltage L3",          "V",   "voltage",   "measurement") \
+    X("pv1_voltage",     pv1Voltage,       1, "PV1 Voltage",              "V",   "voltage",   "measurement") \
     X("pv1_current",   pv1Current,       2, "PV1 Current",              "A",   "current",   "measurement") \
     X("pv2_voltage",   pv2Voltage,       1, "PV2 Voltage",              "V",   "voltage",   "measurement") \
     X("pv2_current",   pv2Current,       2, "PV2 Current",              "A",   "current",   "measurement") \

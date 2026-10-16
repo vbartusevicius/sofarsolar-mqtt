@@ -66,14 +66,28 @@ private:
     int16_t       _tapY         = -1;
 
     // Repaint only changed content — full redraws roll visibly over SPI
-    struct NodeCache { char value[20] = ""; char sub[28] = ""; uint16_t color = 0; bool valid = false; };
+    struct CardCache {
+        char     hdrRight[14] = "";
+        char     value[16]    = "";
+        char     row1[20]     = "";
+        char     row2[20]     = "";
+        int8_t   socPct       = -1;
+        uint16_t color        = 0;
+        bool     valid        = false;
+    };
+    struct HubCache {
+        char     line1[16] = "";
+        char     line2[16] = "";
+        uint16_t color     = 0;
+        bool     valid     = false;
+    };
     // Arrows show direction only: the magnitude is already in the node boxes
     struct ArrowCache { bool dir = false; bool drawn = false; uint16_t color = 0; };
-    struct ArrowDef { int16_t fx, fy, tx, ty; };
     static constexpr uint8_t SYS_LINES = 5;
 
-    NodeCache  _ndSolar, _ndGrid, _ndBatt, _ndHome;
-    ArrowCache _arPv, _arGrid, _arBatt;
+    CardCache  _cdSolar, _cdGrid, _cdHome, _cdBatt;
+    HubCache   _hubInv;
+    ArrowCache _arPv, _arGrid, _arHome, _arBatt;
     char       _btnLine1[20] = "";
     char       _btnLine2[36] = "";
     bool       _btnValid     = false;
@@ -88,27 +102,26 @@ private:
     void setTab(Tab t);
     void invalidateCaches();
     void drawTabBar();
+    void drawTopLinkDots(bool wifiOk, bool modbusOk, bool mqttOk);
     void drawHint();
     void drawHintLine(const char* text);
-    void drawNodeFrame(int16_t x, int16_t y, int16_t w, int16_t h,
-                       const char* name);
-    void redrawNode(int16_t x, int16_t y, int16_t w, int16_t h,
-                    const char* name, const char* value, const char* sub,
-                    uint16_t color, NodeCache& c);
-    void drawArrowLine(int16_t x0, int16_t y0, int16_t x1, int16_t y1,
-                       uint16_t color);
-    void redrawArrow(const ArrowDef& d, bool visible, bool forward,
-                     uint16_t color, ArrowCache& c);
+    void redrawCard(int16_t x, int16_t y, int16_t w, int16_t h,
+                    const char* title, const char* hdrRight,
+                    const char* value, const char* row1, const char* row2,
+                    int8_t socPct, uint16_t color, CardCache& c);
+    void redrawHub(const InverterData& inv, bool passiveOk);
+    void drawElbowArm(uint8_t arm, bool toHub, uint16_t color);
+    void redrawArm(uint8_t arm, bool visible, bool toHub,
+                   uint16_t color, ArrowCache& c);
     void printOver(int16_t x0, int16_t x1, int16_t y, uint8_t size,
                    uint16_t fg, uint16_t bg, const char* prev, const char* next);
     void updateFlow(const InverterData& inv, const BatterySaver& bs,
                     const ModeController& ctrl);
-    void updateSys(const InverterData& inv, const char* sn,
-                   bool wifiOk, bool modbusOk, bool mqttOk);
+    void updateSys(const InverterData& inv, const BatterySaver& bs,
+                   const ModeController& ctrl, const char* sn);
     void drawCentered(int16_t y, const String& text, uint8_t size,
                       uint16_t fg);
     void sysPrint(uint8_t idx, int16_t y, const char* text);
-    void drawStatusDots(bool wifiOk, bool modbusOk, bool mqttOk);
     void drawLogTail(int16_t y);
     void drawCalScreen();
     bool calPollTouch(bool down, unsigned long now);

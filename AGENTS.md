@@ -18,7 +18,7 @@ baud, Modbus slave `0x01`. ILI9341 TFT + XPT2046 touch on SPI
 
 ```bash
 ~/.platformio/penv/bin/pio run            # firmware (default env: esp8266)
-~/.platformio/penv/bin/pio test -e native # 89 native gtest cases, must all pass
+~/.platformio/penv/bin/pio test -e native # 90 native gtest cases, must all pass
 ```
 
 Both must pass before any change is considered done. CI
@@ -181,8 +181,11 @@ legacy compatibility bytes at 199–200, tuning at 204–219, touch calibration 
   block; slow diagnostic/energy blocks (`System`, `BatteryTotals`, `Energy`,
   `WorkingMode`) run every 6th cycle (30 s) and on link recovery, so a CRC
   glitch in lifetime energy counters never drops live `gridPower`. Pre-TX bus
-  silence uses elapsed time since last activity (`modbusSilenceWaitMs`, 5 ms)
-  rather than an unconditional `delay(20)`.
+  silence uses elapsed time since last activity (`modbusSilenceWaitMs`,
+  `MIN_SILENCE_MS = 20` ms — do not lower to 5 ms: after the 88-byte Grid
+  response, HYD V120005 needs ~15–20 ms turnaround before receiving an `FC 0x10`
+  write) rather than an unconditional `delay(20)` when the bus has already been
+  idle.
 - **Bound every read loop in wall-clock time** (`MODBUS_LISTEN_BUDGET_MS`).
   Bytes addressed to another slave restart the first-byte timeout, so the loop
   can otherwise stall forever at `idx == 0`.

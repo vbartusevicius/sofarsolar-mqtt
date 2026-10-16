@@ -80,3 +80,14 @@ TEST(PollStepSequence, FastAndSlowCyclesStepCorrectly) {
     EXPECT_EQ(inverterNextPollStep(POLL_ENERGY,   true), POLL_WORKMODE);
     EXPECT_EQ(inverterNextPollStep(POLL_WORKMODE, true), POLL_GRID);
 }
+
+TEST(InverterSelfPower, ComputesDcInMinusAcOutClampedToZero) {
+    // Sunny: 10000 W PV, +4000 W battery charge, +5750 W AC output -> 250 W loss
+    EXPECT_EQ(inverterComputeSelfPower(10000, 4000, 5750), 250);
+    // Evening discharge: 0 W PV, -1000 W battery discharge, +880 W AC -> 120 W loss
+    EXPECT_EQ(inverterComputeSelfPower(0, -1000, 880), 120);
+    // Night standby: 0 W PV, 0 W battery, -60 W AC drawn from grid -> 60 W loss
+    EXPECT_EQ(inverterComputeSelfPower(0, 0, -60), 60);
+    // Measurement jitter where AC momentarily exceeds DC -> clamped to 0
+    EXPECT_EQ(inverterComputeSelfPower(500, 0, 520), 0);
+}

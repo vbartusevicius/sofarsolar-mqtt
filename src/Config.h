@@ -38,7 +38,9 @@
 #define REG_GRID_FREQ      0x0484   // U16 / 100 → Hz
 #define REG_INV_POWER      0x0485   // S16 × 10  → W
 #define REG_GRID_POWER     0x0488   // S16 × 10  → W  (+export / −import)
-#define REG_GRID_VOLTAGE   0x048D   // U16 / 10  → V
+#define REG_GRID_VOLTAGE   0x048D   // U16 / 10  → V  (L1)
+#define REG_GRID_V_L2      0x0498   // U16 / 10  → V  (L2)
+#define REG_GRID_V_L3      0x04A3   // U16 / 10  → V  (L3)
 #define REG_LOAD_POWER     0x04AF   // S16 × 10  → W
 // PV
 #define REG_PV1_V          0x0584   // U16 / 10  → V

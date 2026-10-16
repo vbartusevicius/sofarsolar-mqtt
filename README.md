@@ -1,34 +1,45 @@
 # SofarSolar MQTT
 
-A smart home interface for Sofar HYD-xx00-KTL (HYDV2) solar and battery inverters.
+Local, cloud-free monitoring and passive-mode battery control firmware for **Sofar Solar HYD 5–20KTL-3PH (HYDV2 / G3)** three-phase hybrid inverters.
 
-Forked from [Sofar2mqtt](https://github.com/IgorYbema/Sofar2mqtt) and rewritten as a modular, maintainable firmware targeting the **HYD 20 KTL** (HYDV2 register map). Runs on an ESP8266 with a TFT touchscreen and RS485 transceiver (e.g. the [Tindie module](https://www.tindie.com/products/thehognl/esp12-f-with-rs485-modbus-and-optional-touch-tft/)).
+### Purpose
+
+Sofar's cloud logger updates only every 5 minutes and offers no fast, flash-safe local control for home automation. **SofarSolar MQTT** runs on an ESP8266 wired directly to the inverter's RS485 port to provide:
+1. **Real-time local telemetry** (3-second power-flow polling, 3-phase voltages, dual-MPPT solar, dual-pack battery metrics, inverter self-consumption, and lifetime energy counters) published over MQTT with **Home Assistant auto-discovery**.
+2. **Flash-safe Passive Mode battery control** — including a **Battery Saver** mode ("charge from excess solar, never discharge to the grid") that uses the HYD's native `[0..maxPower]` DSP window (`0x1187–0x118C`) for millisecond response and **1 register write per mode change** (with automatic closed-loop fallback to a hysteresis-guarded software loop if needed).
+3. **At-a-glance local interfaces** — a tabbed Web UI (`Overview`, `Settings`, `System & Log`) and an on-device `240×320` ILI9341 touch LCD showing live 4-quadrant power flow around the inverter hub.
+
+Forked from [Sofar2mqtt](https://github.com/IgorYbema/Sofar2mqtt) and rewritten as a modular, unit-tested firmware targeting the **HYD 20 KTL** on an ESP8266 with an ILI9341 TFT touchscreen and RS485 transceiver (e.g. the [Tindie module](https://www.tindie.com/products/thehognl/esp12-f-with-rs485-modbus-and-optional-touch-tft/)).
+
+### Web Dashboard
 
 ![Dashboard](docs/dashboard.png)
 
+### On-Device Touch LCD (`FLOW` & `SYS` Tabs)
+
+![LCD Screens](docs/lcd_screens.png)
+
 ## Features
 
-- **Modbus RTU** polling of ~90 HYDV2 registers (system, grid, PV×2, battery×2, energy counters)
-- **MQTT** state publishing as a single JSON payload with configurable interval
-- **Home Assistant** auto-discovery for ~45 sensors + a battery-saver switch
-- **Battery Saver** mode — charges from excess solar, prevents grid discharge
-- **ILI9341 TFT** with tabbed UI: live power-flow diagram (PV ⇄ Home ⇄ Grid/Battery, arrows show direction, boxes show values) + a system tab (version, IP, RSSI, heap, log tail), with a self-calibrating touch layer
-- **Web dashboard** at `http://<device-ip>/` with live data, settings, and battery-saver control
+- **Cooperative Modbus RTU state machine** (`Inverter::pollStep()`) polling fast power-flow blocks every 3 s and slow diagnostic/energy blocks every 30 s (~50 ms max loop stall per tick)
+- **MQTT** state publishing streamed directly to the socket + self-echo round-trip liveness check
+- **Home Assistant** auto-discovery for 50+ entities (sensors, mode select, battery-saver switch, charge/auto power numbers) generated from a single `TelemetrySchema.h` definition
+- **Battery Saver** mode — uses the inverter's native `[0..maxPower]` passive window (`Option A`, 1 write on activation) with automatic closed-loop fallback to a sample-gated software loop (`Option B`)
+- **ILI9341 TFT** with 2×2 quadrant cards (`SOLAR`, `GRID`, `HOME`, `BATT` with graphical SOC bar) around a central `INV` hub (temperature + self-consumption W) and a `SYS` diagnostics/log tab
+- **Tabbed Web Dashboard** at `http://<device-ip>/` (`Overview`, `Settings`, `System & Log`) with grouped subsystem tables
 - **WiFiManager** captive portal for first-time WiFi + MQTT setup
-- **ArduinoOTA** for over-the-air firmware updates
-- **Web firmware upload** — drop a `firmware.bin` in the web UI to flash over WiFi (no TLS, no cloud dependency)
-- **TaskManagerIO** cooperative task scheduling (no blocking delays in the main loop)
-- **ArduinoJson v7** for all JSON serialisation
+- **Web firmware upload** — drop a `firmware.bin` in the web UI to flash over WiFi (no TLS, no cloud dependency) + **ArduinoOTA**
+- **85+ native GoogleTest cases** covering CRC16, frame bounds checking, passive write cache, native-window fallback, touch calibration/gestures, health supervisor, and end-to-end Modbus integration
 
 ## MQTT Topics
 
 Subscribe to `<deviceName>/state` for a JSON payload containing:
 
 ### System
-`run_state`, `inverter_temp`, `heatsink_temp`
+`run_state`, `inverter_temp`, `heatsink_temp`, `inverter_self_w`
 
-### Grid
-`grid_freq`, `inverter_power`, `grid_power`, `grid_voltage`, `load_power`
+### Grid (3-Phase)
+`grid_freq`, `inverter_power`, `grid_power`, `grid_voltage` (L1), `grid_voltage_l2`, `grid_voltage_l3`, `load_power`
 
 ### PV
 `pv1_voltage`, `pv1_current`, `pv1_power`, `pv2_voltage`, `pv2_current`, `pv2_power`, `pv_total`
@@ -46,7 +57,7 @@ Subscribe to `<deviceName>/state` for a JSON payload containing:
 `today_gen`, `total_gen`, `today_use`, `total_use`, `today_imp`, `total_imp`, `today_exp`, `total_exp`, `today_chg`, `total_chg`, `today_dis`, `total_dis`
 
 ### Status
-`working_mode`, `battery_save`, `battery_save_target`, `modbus_ok`, `mqtt_ok`, `wifi_ok`, `uptime`
+`working_mode`, `passive_mode_ok`, `battery_save`, `battery_save_target`, `bsave_strategy`, `passive_timeout_s`, `timeout_action`, `keepalive_s`, `modbus_ok`, `mqtt_ok`, `wifi_ok`, `uptime`, `free_heap`, `max_free_block`, `heap_frag`
 
 ### Commands
 
@@ -59,7 +70,7 @@ These topics require the inverter to be in **Passive Mode**. All commands disabl
 
 ### Battery Saver
 
-When enabled, the firmware reads grid power every 3 seconds and adjusts the battery charge target so that only excess solar is stored. The battery **never discharges to the grid** — the charge target is clamped to 0–20000 W (`BSAVE_MAX_POWER`).
+When enabled, Battery Saver first configures the HYD's native passive window (`Gdes = 0 W, Blo = 0 W, Bup = maxPower` at `0x1187–0x118C`). In this **`native` (`Option A`)** mode, the inverter's own DSP absorbs solar surplus up to `maxPower` and prevents battery discharge (`Blo = 0 W`) with **a single Modbus write on activation and zero periodic writes all day**. A closed-loop watchdog monitors live grid and battery power; if an inverter firmware revision does not honor the asymmetric window over 10 consecutive samples, it automatically falls back to **`loop` (`Option B`)**, which adjusts the charge target from measured grid export/import once per sensor sample.
 
 ### Inverter flash protection
 

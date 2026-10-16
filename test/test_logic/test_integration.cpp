@@ -146,7 +146,7 @@ int32_t  FakeInverterBus::lastMaxWritten    = -999999;
 
 TEST(TelemetrySchema, AllKeysAndNamesAreUniqueAndComplete) {
     constexpr size_t N = sizeof(ALL_SCHEMA) / sizeof(ALL_SCHEMA[0]);
-    EXPECT_EQ(N, 45u);
+    EXPECT_EQ(N, 48u);
     for (size_t i = 0; i < N; i++) {
         ASSERT_NE(ALL_SCHEMA[i].key, nullptr);
         ASSERT_NE(ALL_SCHEMA[i].name, nullptr);

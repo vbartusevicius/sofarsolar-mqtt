@@ -31,7 +31,11 @@ bool Inverter::readGridBlock() {
     _data.inverterPower = s16(grid, REG_INV_POWER,    REG_GRID_START) * 10L;
     _data.gridPower     = s16(grid, REG_GRID_POWER,   REG_GRID_START) * 10L;
     _data.gridVoltage   = u16(grid, REG_GRID_VOLTAGE, REG_GRID_START) / 10.0f;
+    _data.gridVoltageL2 = u16(grid, REG_GRID_V_L2,    REG_GRID_START) / 10.0f;
+    _data.gridVoltageL3 = u16(grid, REG_GRID_V_L3,    REG_GRID_START) / 10.0f;
     _data.loadPower     = s16(grid, REG_LOAD_POWER,   REG_GRID_START) * 10L;
+    _data.inverterSelfPower = inverterComputeSelfPower(
+        _data.pvPower, _data.batteryPower, _data.inverterPower);
     _data.sampleSeq++;
     if (_data.sampleSeq == 0) _data.sampleSeq = 1;
     return true;
@@ -50,6 +54,8 @@ bool Inverter::readPvBlock() {
     // Sum MPPT1 + MPPT2 directly (10 W resolution) instead of a second round
     // trip to 0x05C4 (100 W resolution, unsupported on some G3 firmwares).
     _data.pvPower    = _data.pv1Power + _data.pv2Power;
+    _data.inverterSelfPower = inverterComputeSelfPower(
+        _data.pvPower, _data.batteryPower, _data.inverterPower);
     return true;
 }
 
@@ -71,6 +77,8 @@ bool Inverter::readBattBlock() {
     _data.batt2SOC     = u16(bat, REG_BATT2_SOC,  REG_BATT_START);
     _data.batt2SOH     = u16(bat, REG_BATT2_SOH,  REG_BATT_START);
     _data.batt2Cycles  = u16(bat, REG_BATT2_CYC,  REG_BATT_START);
+    _data.inverterSelfPower = inverterComputeSelfPower(
+        _data.pvPower, _data.batteryPower, _data.inverterPower);
     return true;
 }
 

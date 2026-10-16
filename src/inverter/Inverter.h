@@ -10,11 +10,14 @@ struct InverterData {
     int16_t  inverterTemp  = 0;      // °C
     int16_t  heatsinkTemp  = 0;      // °C
     // Grid
-    float    gridFreq      = 0;      // Hz
-    int32_t  inverterPower = 0;      // W
-    int32_t  gridPower     = 0;      // W  (+export / −import)
-    float    gridVoltage   = 0;      // V
-    int32_t  loadPower     = 0;      // W
+    float    gridFreq          = 0;      // Hz
+    int32_t  inverterPower     = 0;      // W
+    int32_t  inverterSelfPower = 0;      // W  (self-consumption + conversion loss)
+    int32_t  gridPower         = 0;      // W  (+export / −import)
+    float    gridVoltage       = 0;      // V  (L1)
+    float    gridVoltageL2     = 0;      // V  (L2)
+    float    gridVoltageL3     = 0;      // V  (L3)
+    int32_t  loadPower         = 0;      // W
     // PV
     float    pv1Voltage    = 0;      // V
     float    pv1Current    = 0;      // A

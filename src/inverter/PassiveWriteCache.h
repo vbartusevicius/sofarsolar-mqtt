@@ -50,4 +50,13 @@ inline uint8_t inverterNextPollStep(uint8_t step, bool slowCycleActive) {
     return POLL_GRID;
 }
 
+// Inverter self-consumption + AC/DC conversion loss in Watts:
+// DC input (pvPower - batteryPower) minus AC output (inverterPower), clamped >= 0.
+inline int32_t inverterComputeSelfPower(int32_t pvPower, int32_t batteryPower,
+                                        int32_t inverterPower)
+{
+    int32_t loss = pvPower - batteryPower - inverterPower;
+    return loss > 0 ? loss : 0;
+}
+
 #endif // SOFAR_PASSIVE_WRITE_CACHE_H
