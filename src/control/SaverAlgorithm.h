@@ -24,7 +24,7 @@ inline int32_t saverIntegrateSample(int32_t target, int32_t gridPower,
     return saverAccumulateTarget(target, gridPower, maxPower);
 }
 
-#define BSAVE_NATIVE_FAIL_STREAK 6U   // ~18 s of consecutive violation -> fallback
+#define BSAVE_NATIVE_FAIL_STREAK 10U  // ~30 s of consecutive violation -> fallback
 
 // Closed-loop check for Option A (native [Blo=0, Bup=maxPower] window).
 // Returns true if the current sample violates what [0, maxPower] must do:

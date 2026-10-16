@@ -113,15 +113,17 @@ struct FakeInverterBus {
             appendCrcAndEnqueue(resp);
         } else if (fc == FC_WRITE_MULTI && reg == REG_PASSIVE_CTRL && len == 21) {
             fc16Count++;
-            if (corruptNextWrite) {
+            int32_t reqMin = readS32BE(&req[11]);
+            int32_t reqMax = readS32BE(&req[15]);
+            if (corruptNextWrite || (!allowNativeWindow && reqMin != reqMax)) {
                 corruptNextWrite = false;
-                // Enqueue a truncated/corrupt frame so writeMultiple fails
+                // Enqueue a Modbus exception / corrupt frame so writeMultiple fails
                 Serial.rx.push_back(slave);
-                Serial.rx.push_back(FC_WRITE_MULTI);
+                Serial.rx.push_back((uint8_t)(FC_WRITE_MULTI | 0x80));
                 return;
             }
-            lastMinWritten = readS32BE(&req[11]);
-            lastMaxWritten = readS32BE(&req[15]);
+            lastMinWritten = reqMin;
+            lastMaxWritten = reqMax;
             std::vector<uint8_t> resp = {
                 slave, FC_WRITE_MULTI, req[2], req[3], req[4], req[5]
             };
@@ -256,7 +258,7 @@ TEST(Integration, OptionAFallsBackToLoopWhenInverterIgnoresWindowAtRuntime) {
     EXPECT_EQ(FakeInverterBus::fc16Count, 1u);
 
     // Run poll cycles until BSAVE_NATIVE_FAIL_STREAK fresh Grid samples arrive
-    for (int i = 0; i < 30 && bs.strategy() == BatterySaver::BSAVE_NATIVE; i++) {
+    for (int i = 0; i < 60 && bs.strategy() == BatterySaver::BSAVE_NATIVE; i++) {
         fakeClock().now += 1000;
         inv.pollStep();
         bs.update();

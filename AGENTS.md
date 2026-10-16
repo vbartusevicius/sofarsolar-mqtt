@@ -114,15 +114,20 @@ Treat writes to `0x1187` as potentially wearing. Write on change only.
   discharge with **a single write when enabled and zero periodic writes all
   day**. The old 3 s software accumulator loop was inherited from ME3000
   `Sofar2mqtt`, which had no `[Blo, Bup]` window.
-  When `BatterySaver` is enabled, it writes `sendPassiveRange(0, _maxPower)` and
-  verifies the inverter stored the asymmetric window via `verifyPassiveRange()`
-  (reading back `0x1187..0x118C`). While in `BSAVE_NATIVE`, a closed-loop
-  behavioral check (`saverNativeShouldFallback()`) watches each fresh sample:
-  if the inverter either discharges `>300 W` or exports `>max(300, minDelta) W`
-  with `SOC < 95%` and `batteryPower < 100 W` for `BSAVE_NATIVE_FAIL_STREAK` (6)
-  consecutive samples, `BatterySaver` automatically falls back to `BSAVE_LOOP`
-  (Option B). Active strategy (`"native"` vs `"loop"`) is exposed in `/json`
-  (`bsave_strategy`) and the Web UI System cards.
+  When `BatterySaver` is enabled, it writes `sendPassiveRange(0, _maxPower)`.
+  If the inverter's Modbus parser acknowledges the `FC 0x10` write without an
+  exception, it enters `BSAVE_NATIVE` (do **not** immediately `FC 0x03`-read
+  `0x1187` back 5 ms later: on the HYD, the ARM comm board updates the
+  read-only mirror asynchronously up to minutes later — hence
+  `prevent_update=True` in `solax-modbus` — so an immediate readback reads stale
+  values and falsely rejects native mode). While in `BSAVE_NATIVE`, a
+  closed-loop behavioral check (`saverNativeShouldFallback()`) watches each
+  fresh sample: if the inverter either discharges `>300 W` or exports
+  `>max(300, minDelta) W` with `SOC < 95%` and `batteryPower < 100 W` for
+  `BSAVE_NATIVE_FAIL_STREAK` (10) consecutive samples, `BatterySaver`
+  automatically falls back to `BSAVE_LOOP` (Option B). Active strategy
+  (`"native"` vs `"loop"`) is exposed in `/json` (`bsave_strategy`) and the Web
+  UI System cards.
 - `BSAVE_MIN_DELTA` (100 W) hysteresis in software-loop fallback mode;
   runtime-tunable 20–2000 W.
 - **Sample-sequence gating (`saverIntegrateSample`)**: each `Inverter::readGridBlock()`

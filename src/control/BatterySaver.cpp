@@ -60,20 +60,24 @@ void BatterySaver::update() {
     if (!d.valid) return;
 
     if (_strategy == BSAVE_PROBING) {
-        if (!_inv.sendPassiveRange(0, _maxPower)) return;
-        if (_inv.verifyPassiveRange(0, _maxPower)) {
+        // An FC16 ACK from 0x1187 confirms the inverter accepted the 6-register
+        // [Gdes=0, Blo=0, Bup=_maxPower] write. Do NOT immediately FC03-read
+        // 0x1187 back: on the HYD, the read-only mirror updates asynchronously
+        // (up to minutes later), so an immediate readback reads stale 0s and
+        // falsely rejects native mode.
+        if (_inv.sendPassiveRange(0, _maxPower)) {
             _strategy         = BSAVE_NATIVE;
             _targetPower      = _maxPower;
             _lastSampleSeq    = d.sampleSeq;
             _nativeFailStreak = 0;
-            appLog.add("BSV", "native [0..max] window verified");
+            appLog.add("BSV", "native [0..max] window active");
             return;
         }
         _strategy       = BSAVE_LOOP;
         _targetPower    = 0;
         _lastSentTarget = -1;
         _lastSampleSeq  = 0;
-        appLog.add("BSV", "native window readback failed, using software loop");
+        appLog.add("BSV", "native window write rejected, using software loop");
     }
 
     if (_strategy == BSAVE_NATIVE) {
@@ -87,7 +91,10 @@ void BatterySaver::update() {
             _targetPower    = 0;
             _lastSentTarget = -1;
             _lastSampleSeq  = 0;
-            appLog.add("BSV", "native window not tracking, fallback to loop");
+            char lb[64];
+            snprintf(lb, sizeof(lb), "native fallback: grid=%ld batt=%ld soc=%u",
+                     (long)d.gridPower, (long)d.batteryPower, (unsigned)d.batterySOC);
+            appLog.add("BSV", lb);
         } else {
             return;
         }
