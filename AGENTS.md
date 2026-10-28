@@ -18,7 +18,19 @@ baud, Modbus slave `0x01`. ILI9341 TFT + XPT2046 touch on SPI
 
 ```bash
 ~/.platformio/penv/bin/pio run            # firmware (default env: esp8266)
-~/.platformio/penv/bin/pio test -e native # 90 native gtest cases, must all pass
+~/.platformio/penv/bin/pio test -e native # 100 native gtest cases, must all pass
+```
+
+On this Mac the xtensa toolchain is x86-only and Rosetta is unavailable
+("Bad CPU type in executable"). Build the firmware in Docker instead; output
+lands in `.pio/build-docker/esp8266/firmware.bin`:
+
+```bash
+docker run --rm --platform linux/amd64 -v "$PWD":/project \
+  -v sofar-pio-cache:/root/.platformio \
+  -e PLATFORMIO_BUILD_DIR=/project/.pio/build-docker \
+  -e PLATFORMIO_LIBDEPS_DIR=/tmp/libdeps -w /project python:3.12-slim \
+  sh -c "pip install -q platformio && pio run -e esp8266"
 ```
 
 Both must pass before any change is considered done. CI
@@ -196,9 +208,21 @@ legacy compatibility bytes at 199–200, tuning at 204–219, touch calibration 
   the socket without intermediate `String`s; MQTT message handling uses a stack
   buffer; the SYS tab formats the IP from octets rather than `toString()`.
   `AppLog::text()` was deleted so it cannot be reintroduced.
-- `delay(1)` and `yield()` both feed the software and hardware watchdogs. A
-  blocking network call is a responsiveness problem, not a reset — do not
-  "fix" a watchdog bug that is not there.
+- `delay(1)` and `yield()` both feed the software and hardware watchdogs, so
+  a call that blocks *while yielding* never resets the chip: the device looks
+  dead (no web, no MQTT, touch cannot wake the backlight) until power-cycled.
+  `util/LoopWatchdog.h` + a 1 s `Ticker` in `main.cpp` hard-resets after
+  `LOOP_STALL_MS` (120 s) without a completed `loop()`. Every loop/task step
+  sets `STAGE(...)`; the stage is snapshotted to RTC memory (offset 64 —
+  blocks 0..31 belong to eboot/OTA) and logged at the next boot as
+  `[SYS] loop stalled in '<stage>'` or `crashed in '<stage>'`. Tag any new
+  task with a stage. The Ticker callback runs in timer context: RTC write
+  and `ESP.reset()` only — no logging, no `ESP.restart()` (it suspends).
+- **Never serialize JSON straight into a socket.** PubSubClient and
+  WiFiClient forward each byte as its own `write()`, and into a stalled socket
+  each one blocks for the full client timeout. Use `util/ChunkedWriter.h`,
+  which batches 256 B and stops at the first short write; MQTT then forces a
+  reconnect.
 - With the Modbus link down, `readSensors()` probes with a single read instead
   of paying nine timeouts (the nightly case).
 - `util/Health.h` is the supervisor of last resort, evaluated once a minute:

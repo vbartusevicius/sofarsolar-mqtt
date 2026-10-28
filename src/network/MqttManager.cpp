@@ -8,6 +8,7 @@
 #include "control/ModeController.h"
 #include "ha/Discovery.h"
 #include "util/AppLog.h"
+#include "util/ChunkedWriter.h"
 #include "Version.h"
 
 MqttManager* MqttManager::_instance = nullptr;
@@ -156,18 +157,22 @@ void MqttManager::publish() {
     char topic[80];
     snprintf(topic, sizeof(topic), "%s/state", _cfg.name());
 
-    // stream to the socket, no intermediate String
+    // stream to the socket in chunks, no intermediate String
     size_t len = measureJson(doc);
     bool ok = _mqtt.beginPublish(topic, len, false);
     if (ok) {
-        serializeJson(doc, _mqtt);
-        ok = _mqtt.endPublish();
+        ChunkedWriter<PubSubClient, 256> out(_mqtt);
+        serializeJson(doc, out);
+        ok = out.finish() && _mqtt.endPublish();
     }
 
     char lb[48];
     snprintf(lb, sizeof(lb), "Pub %s len=%u%s", ok ? "OK" : "FAIL",
              (unsigned)len, ok ? "" : " (socket)");
     appLog.add("MQTT", lb);
+    // A half-written packet desyncs the MQTT stream; drop the session
+    // rather than block on the same stalled socket every 10 s.
+    if (!ok) forceReconnect("publish write failed");
 }
 
 void MqttManager::fillState(JsonDocument& doc) {

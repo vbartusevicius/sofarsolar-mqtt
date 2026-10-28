@@ -83,7 +83,7 @@ private:
     };
     // Arrows show direction only: the magnitude is already in the node boxes
     struct ArrowCache { bool dir = false; bool drawn = false; uint16_t color = 0; };
-    static constexpr uint8_t SYS_LINES = 5;
+    static constexpr uint8_t SYS_LINES = 6;
 
     CardCache  _cdSolar, _cdGrid, _cdHome, _cdBatt;
     HubCache   _hubInv;
@@ -92,7 +92,7 @@ private:
     char       _btnLine2[36] = "";
     bool       _btnValid     = false;
     bool       _btnActive    = false;
-    char       _sysCache[5][64];
+    char       _sysCache[SYS_LINES][64];
     bool       _sysValid  = false;
     uint8_t    _dotsCache = 0xFF;
     bool       _dotsValid = false;

@@ -2,6 +2,7 @@
 #include <ESP8266WiFi.h>
 #include <ArduinoJson.h>
 #include "inverter/TelemetrySchema.h"
+#include "util/ChunkedWriter.h"
 #include "Version.h"
 
 struct HaSensor {
@@ -32,8 +33,12 @@ static void publishRetainedJson(PubSubClient& mqtt, const char* topic,
 {
     size_t len = measureJson(doc);
     if (mqtt.beginPublish(topic, len, true)) {
-        serializeJson(doc, mqtt);
-        mqtt.endPublish();
+        ChunkedWriter<PubSubClient, 256> out(mqtt);
+        serializeJson(doc, out);
+        // beginPublish() fails fast once disconnected, so the remaining
+        // ~50 configs cost nothing instead of one socket timeout each.
+        if (!out.finish()) mqtt.disconnect();
+        else mqtt.endPublish();
     }
     yield();
 }

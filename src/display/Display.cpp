@@ -538,30 +538,33 @@ void Display::updateSys(const InverterData& inv, const BatterySaver& bs,
                         const ModeController& ctrl, const char* sn)
 {
     char v[64];
-    snprintf(v, sizeof(v), "FW: %s   SN: %s", FW_VERSION, sn);
-    sysPrint(0, 34, v);
+    snprintf(v, sizeof(v), "FW: %s", FW_VERSION);
+    sysPrint(0, 33, v);
+
+    snprintf(v, sizeof(v), "SN: %s", sn);
+    sysPrint(1, 43, v);
 
     IPAddress ip = WiFi.localIP();      // no toString(): that allocated a String
     unsigned long up = millis() / 1000;
     snprintf(v, sizeof(v), "IP: %u.%u.%u.%u  Up: %lud %02lu:%02lu",
              ip[0], ip[1], ip[2], ip[3],
              up / 86400, (up / 3600) % 24, (up / 60) % 60);
-    sysPrint(1, 46, v);
+    sysPrint(2, 53, v);
 
     snprintf(v, sizeof(v), "RSSI: %ld dBm   Heap: %u/%u kB (%u%%)",
              (long)WiFi.RSSI(),
              (unsigned)(heapStats.freeHeap / 1024),
              (unsigned)(heapStats.maxBlock / 1024), (unsigned)heapStats.frag);
-    sysPrint(2, 58, v);
+    sysPrint(3, 63, v);
 
     snprintf(v, sizeof(v), "Temp I/H/B: %d/%d/%dC  Self: %ldW",
              (int)inv.inverterTemp, (int)inv.heatsinkTemp, (int)inv.battTemp,
              (long)inv.inverterSelfPower);
-    sysPrint(3, 70, v);
+    sysPrint(4, 73, v);
 
     snprintf(v, sizeof(v), "Mode: %s (%s)  Inv: %u",
              ctrl.currentMode(), bs.strategyName(), (unsigned)inv.workingMode);
-    sysPrint(4, 82, v);
+    sysPrint(5, 83, v);
 
     if (!_logValid) {
         _tft.drawFastHLine(0, 96, 240, CLR_OFF);

@@ -11,6 +11,7 @@
 #include "display/Display.h"
 #include "web/WebPage.h"
 #include "util/AppLog.h"
+#include "util/ChunkedWriter.h"
 #include "Version.h"
 
 SofarWebServer::SofarWebServer(EEConfig& cfg, Inverter& inv,
@@ -23,7 +24,9 @@ SofarWebServer::SofarWebServer(EEConfig& cfg, Inverter& inv,
 void SofarWebServer::sendJson(const JsonDocument& doc) {
     _server.setContentLength(measureJson(doc));
     _server.send(200, "application/json", "");
-    serializeJson(doc, _server.client());
+    ChunkedWriter<WiFiClient, 256> out(_server.client());
+    serializeJson(doc, out);
+    out.finish();
 }
 
 void SofarWebServer::begin() {
