@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include "inverter/PassiveWriteCache.h"
+#include "inverter/Derived.h"
 
 // These tests guard the inverter flash-wear fix: redundant writes must be
 // suppressed, but the keep-alive must still resend before the inverter's

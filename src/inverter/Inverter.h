@@ -3,79 +3,16 @@
 
 #include "Config.h"
 #include "modbus/Modbus.h"
-
-struct InverterData {
-    // System
-    uint16_t runState      = 0;
-    int16_t  inverterTemp  = 0;      // °C
-    int16_t  heatsinkTemp  = 0;      // °C
-    // Grid
-    float    gridFreq          = 0;      // Hz
-    int32_t  inverterPower     = 0;      // W
-    int32_t  inverterSelfPower = 0;      // W  (self-consumption + conversion loss)
-    int32_t  gridPower         = 0;      // W  (+export / −import)
-    float    gridVoltage       = 0;      // V  (L1)
-    float    gridVoltageL2     = 0;      // V  (L2)
-    float    gridVoltageL3     = 0;      // V  (L3)
-    int32_t  loadPower         = 0;      // W
-    // PV
-    float    pv1Voltage    = 0;      // V
-    float    pv1Current    = 0;      // A
-    int32_t  pv1Power      = 0;      // W
-    float    pv2Voltage    = 0;      // V
-    float    pv2Current    = 0;      // A
-    int32_t  pv2Power      = 0;      // W
-    int32_t  pvPower       = 0;      // W  (total)
-    // Battery 1
-    float    battVoltage   = 0;      // V
-    float    battCurrent   = 0;      // A
-    int32_t  batteryPower  = 0;      // W  (+charge / −discharge)
-    int16_t  battTemp      = 0;      // °C
-    uint16_t batterySOC    = 0;      // %
-    uint16_t battSOH       = 0;      // %
-    uint16_t battCycles    = 0;
-    // Battery 2
-    float    batt2Voltage  = 0;      // V
-    float    batt2Current  = 0;      // A
-    int32_t  batt2Power    = 0;      // W
-    int16_t  batt2Temp     = 0;      // °C
-    uint16_t batt2SOC      = 0;      // %
-    uint16_t batt2SOH      = 0;      // %
-    uint16_t batt2Cycles   = 0;
-    // Battery totals
-    int32_t  battTotalPower = 0;     // W
-    uint16_t battAvgSOC    = 0;      // %
-    uint16_t battAvgSOH    = 0;      // %
-    // Energy counters (kWh)
-    float todayGeneration  = 0;
-    float totalGeneration  = 0;
-    float todayConsumption = 0;
-    float totalConsumption = 0;
-    float todayImport      = 0;
-    float totalImport      = 0;
-    float todayExport      = 0;
-    float totalExport      = 0;
-    float todayCharged     = 0;
-    float totalCharged     = 0;
-    float todayDischarged  = 0;
-    float totalDischarged  = 0;
-    // Mode
-    uint16_t workingMode   = 0;
-
-    uint32_t sampleSeq = 0;   // bumped on each fresh grid-power read
-    bool     valid     = false;
-};
+#include "inverter/InverterData.h"
 
 class Inverter {
 public:
     explicit Inverter(Modbus& mb) : _mb(mb) {}
 
-    bool readSensors();
     bool pollStep();   // cooperative 1-block-per-tick state machine
     bool readSerialNumber();
     bool sendPassiveCommand(int32_t power);
     bool sendPassiveRange(int32_t minPower, int32_t maxPower);
-    bool verifyPassiveRange(int32_t expectedMin, int32_t expectedMax);
 
     // Identical passive commands are re-sent at most this often. 0 = never,
     // which is correct whenever the inverter's passive timeout is disabled.
@@ -118,6 +55,7 @@ private:
     bool readBattTotBlock();
     bool readEnergyBlock();
     bool readWorkModeBlock();
+    bool track(InverterBlock b, bool ok);
 
     bool readBlock(uint16_t start, uint8_t count, uint8_t* buf, uint8_t cap,
                    uint8_t& sz);

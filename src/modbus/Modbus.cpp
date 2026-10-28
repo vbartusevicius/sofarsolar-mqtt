@@ -66,6 +66,7 @@ int Modbus::listen(uint8_t slaveId, uint8_t expectedFc, uint8_t expectedBytes,
             if (expected == 0) {
                 _lastBusAt   = millis();
                 _hadActivity = true;
+                snprintf(_why, sizeof(_why), "byte count %u exceeds frame", (unsigned)frame[2]);
                 return -1;
             }
         }
@@ -79,28 +80,20 @@ int Modbus::listen(uint8_t slaveId, uint8_t expectedFc, uint8_t expectedBytes,
 
     frameSize = idx;
     if (frameSize < 5) {
-        char lb[40];
-        snprintf(lb, sizeof(lb), "Resp timeout got %uB", (unsigned)frameSize);
-        appLog.add("MB", lb);
+        snprintf(_why, sizeof(_why), "timeout got %uB", (unsigned)frameSize);
         return -2;
     }
     if (!checkCRC(frame, frameSize)) {
-        char lb[48];
-        snprintf(lb, sizeof(lb), "Resp CRC fail fc=0x%02X len=%u", fnCode, (unsigned)frameSize);
-        appLog.add("MB", lb);
+        snprintf(_why, sizeof(_why), "CRC fail fc=0x%02X len=%u", fnCode, (unsigned)frameSize);
         return -1;
     }
     if (fnCode & 0x80) {
-        char lb[40];
-        snprintf(lb, sizeof(lb), "Resp err fc=0x%02X code=%u", fnCode, frame[2]);
-        appLog.add("MB", lb);
+        snprintf(_why, sizeof(_why), "exception fc=0x%02X code=%u", fnCode, frame[2]);
         return frame[2];
     }
     if (fnCode != expectedFc) {
-        char lb[48];
-        snprintf(lb, sizeof(lb), "Resp fc mismatch got=0x%02X exp=0x%02X",
+        snprintf(_why, sizeof(_why), "fc mismatch got=0x%02X exp=0x%02X",
                  fnCode, expectedFc);
-        appLog.add("MB", lb);
         return -1;
     }
 
@@ -109,10 +102,8 @@ int Modbus::listen(uint8_t slaveId, uint8_t expectedFc, uint8_t expectedBytes,
     if (fnCode == FC_READ_HOLDING && frameSize >= 5) {
         uint8_t len = modbusPayloadLen(frame[2], frameSize, dataCap, expectedBytes);
         if (len == 0) {
-            char lb[56];
-            snprintf(lb, sizeof(lb), "Resp len bad cnt=%u frame=%u cap=%u",
+            snprintf(_why, sizeof(_why), "len bad cnt=%u frame=%u cap=%u",
                      (unsigned)frame[2], (unsigned)frameSize, (unsigned)dataCap);
-            appLog.add("MB", lb);
             return -1;
         }
         memcpy(data, &frame[3], len);
@@ -125,7 +116,7 @@ int Modbus::listen(uint8_t slaveId, uint8_t expectedFc, uint8_t expectedBytes,
 bool Modbus::readHolding(uint8_t slaveId, uint16_t reg, uint8_t count,
                          uint8_t* data, uint8_t dataCap, uint8_t& dataSize)
 {
-    if (count == 0 || count > 60) return false;
+    if (count == 0 || count > MODBUS_MAX_READ_REGS) return false;
     uint8_t frame[8] = {
         slaveId, FC_READ_HOLDING,
         (uint8_t)(reg >> 8), (uint8_t)(reg & 0xFF),
@@ -141,8 +132,8 @@ bool Modbus::readHolding(uint8_t slaveId, uint16_t reg, uint8_t count,
     int rc = listen(slaveId, FC_READ_HOLDING, (uint8_t)(count * 2),
                     resp, respSize, data, dataCap, dataSize);
     if (rc != 0) {
-        char lb[48];
-        snprintf(lb, sizeof(lb), "RD 0x%04X x%u FAIL rc=%d", reg, count, rc);
+        char lb[72];
+        snprintf(lb, sizeof(lb), "RD 0x%04X x%u FAIL %s", reg, count, _why);
         appLog.add("MB", lb);
     }
     return rc == 0;
@@ -177,8 +168,8 @@ bool Modbus::writeMultiple(uint8_t slaveId, uint16_t reg, uint8_t regCount,
                     resp, respSize, respData, sizeof(respData),
                     respDataSize);
     if (rc != 0) {
-        char lb[48];
-        snprintf(lb, sizeof(lb), "WR 0x%04X x%u FAIL rc=%d", reg, regCount, rc);
+        char lb[72];
+        snprintf(lb, sizeof(lb), "WR 0x%04X x%u FAIL %s", reg, regCount, _why);
         appLog.add("MB", lb);
     }
     return rc == 0;

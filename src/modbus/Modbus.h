@@ -19,6 +19,7 @@ private:
 
     unsigned long _lastBusAt   = 0;
     bool          _hadActivity = false;
+    char          _why[40]     = "";   // last listen() failure, logged once by the caller
 
     void flush();
     int  listen(uint8_t slaveId, uint8_t expectedFc, uint8_t expectedBytes,

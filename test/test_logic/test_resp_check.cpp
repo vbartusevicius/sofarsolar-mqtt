@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "modbus/RespCheck.h"
 
-// The byte count arrives on the wire. Inverter::readSensors passes buffers as
+// The byte count arrives on the wire. Inverter::pollStep passes buffers as
 // small as 2 bytes, so an oversized count used to smash the caller's stack.
 TEST(RespCheck, AcceptsExactFit) {
     EXPECT_EQ(modbusPayloadLen(46, 51, 46), 46);

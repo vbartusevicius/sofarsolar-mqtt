@@ -18,7 +18,7 @@ baud, Modbus slave `0x01`. ILI9341 TFT + XPT2046 touch on SPI
 
 ```bash
 ~/.platformio/penv/bin/pio run            # firmware (default env: esp8266)
-~/.platformio/penv/bin/pio test -e native # 100 native gtest cases, must all pass
+~/.platformio/penv/bin/pio test -e native # 129 native gtest cases, must all pass
 ```
 
 On this Mac the xtensa toolchain is x86-only and Rosetta is unavailable
@@ -37,8 +37,10 @@ Both must pass before any change is considered done. CI
 (`.github/workflows/ci.yml`) runs the firmware build and the native tests in
 Docker (`Dockerfile.test`).
 
-Budget check after building: currently ~44 % flash, ~50 % RAM. A change that
-moves RAM by more than a few hundred bytes deserves an explanation.
+Budget check after building: currently ~44 % flash, ~52 % RAM (42.9 kB). A
+change that moves RAM by more than a few hundred bytes deserves an
+explanation. On ESP8266 string literals live in RAM (`.rodata`), so new name
+tables and log/JSON keys cost RAM, not just flash.
 
 Other tooling:
 - `tools/gen_clangd.py` regenerates the machine-specific `.clangd` (gitignored;
@@ -56,15 +58,40 @@ Other tooling:
   policy goes in a dependency-free header under `src/` and gets native tests.
   Existing examples: `modbus/Crc16.h`, `modbus/RespCheck.h`,
   `inverter/PassiveWriteCache.h`, `inverter/TelemetrySchema.h`,
-  `control/SaverAlgorithm.h`, `display/TouchCal.h`,
-  `display/TouchGesture.h`, `util/Health.h`. End-to-end integration tests in
+  `inverter/Derived.h`, `control/SaverAlgorithm.h`, `control/Mode.h`,
+  `control/Command.h`, `display/FlowModel.h`, `display/TouchCal.h`,
+  `display/TouchGesture.h`, `util/Health.h`, `util/LoopWatchdog.h`,
+  `util/ChunkedWriter.h`. End-to-end integration tests in
   `test/test_logic/test_integration.cpp` also compile `Modbus.cpp`,
-  `Inverter.cpp`, `BatterySaver.cpp`, `ModeController.cpp` and `AppLog.cpp`
-  directly against `test/fakes/Arduino.h`.
+  `Inverter.cpp`, `BatterySaver.cpp`, `ModeController.cpp`, `StateJson.cpp`
+  and `AppLog.cpp` directly against `test/fakes/Arduino.h` (so `AppLog.cpp`
+  must not be `#include`d by a second test file).
+- `Config.h` is only an umbrella for firmware sources. Pure headers and tests
+  include the dependency-free parts directly: `inverter/Registers.h`,
+  `Tuning.h`, `config/EELayout.h` (which `static_assert`s that no field
+  overlaps); `hw/Pins.h` needs `Arduino.h`. `InverterData` lives in the pure
+  `inverter/InverterData.h`.
 - Layering: `Modbus` (transport) → `Inverter` (registers/commands) →
   `BatterySaver` / `ModeController` (policy) → `MqttManager` / `SofarWebServer` /
-  `Display` (presentation). `Display` knows nothing about EEPROM; it reports
-  via callback and `main.cpp` persists.
+  `Display` (presentation). `Display` knows nothing about EEPROM or any
+  control/network class: `main.cpp` passes `InverterData` + a `UiStatus`, the
+  text comes from `display/FlowModel.h`, touches come from
+  `display/TouchInput` as events, and calibration is persisted via callback.
+- **Modes are an enum** (`control/Mode.h`). Text exists only at the edges —
+  MQTT, web, EEPROM, LCD — and is parsed exactly (`modeParse`). Every control
+  surface builds a `Command` with `parseCommand()` (`control/Command.h`) and
+  calls `ModeController::apply()`; MQTT `<dev>/set/<key>` and web
+  `/api/<key>?v=` share the keys. "Battery saver off" is `modeForSaverSwitch()`:
+  always back to `auto`. Only `ModeController` calls `BatterySaver::enable()` /
+  `disable()`, and `ModeController::tick()` is the single control step (once
+  per poll step).
+- Derived values (`inverter_self_w`, `self_sufficiency`, run-state and
+  working-mode names) are computed once in `inverter/Derived.h` and published;
+  the LCD and web UI display them and must not recompute them.
+- One state document: `telemetry/StateJson.cpp` fills it for both MQTT and
+  `/json`.
+- The web UI is plain HTML in `src/web/WebPage.html`; `tools/embed_web.py`
+  (pre-build) gzips it into the gitignored `src/web/WebPage.gz.h`.
 - **Security is deliberately out of scope.** Web endpoints are unauthenticated
   and MQTT credentials are stored and served in plaintext. Do not "fix" this
   unless asked; do mention it if relevant.
@@ -146,7 +173,7 @@ Treat writes to `0x1187` as potentially wearing. Write on change only.
   bumps `InverterData::sampleSeq`, and `BatterySaver::update()` integrates
   `gridPower` at most once per `sampleSeq` so asynchronous timers can never
   double-count a single grid reading.
-- **Declarative mode reconciliation (`ModeController::reconcile()`)**: static
+- **Declarative mode reconciliation (`ModeController::tick()`)**: static
   modes (`auto`, `charge`, `standby`) reconcile through `sendPassiveRange()`,
   and failed Modbus writes invalidate `_cmdCacheValid`, so commands lost to a
   transient CRC glitch or issued while the inverter was asleep at boot are
@@ -168,7 +195,7 @@ Do not conflate them:
   sector, so `EEConfig::save()` compares every byte first and commits only on a
   real change. Tests assert that 20 identical saves cause zero commits.
 
-EEPROM layout (`Config.h`, `EE_SIZE` 512): magic/name/MQTT settings at 0–198,
+EEPROM layout (`config/EELayout.h`, `EE_SIZE` 512): magic/name/MQTT settings at 0–198,
 legacy compatibility bytes at 199–200, tuning at 204–219, touch calibration at
 220–231, control state (mode/charge power/auto limit) at 232–255.
 `EE_KEEPALIVE_MS` (212) is now unused — keep-alive comes from the inverter.
@@ -223,8 +250,13 @@ legacy compatibility bytes at 199–200, tuning at 204–219, touch calibration 
   each one blocks for the full client timeout. Use `util/ChunkedWriter.h`,
   which batches 256 B and stops at the first short write; MQTT then forces a
   reconnect.
-- With the Modbus link down, `readSensors()` probes with a single read instead
+- With the Modbus link down, `pollStep()` probes with a single read instead
   of paying nine timeouts (the nightly case).
+- **The log must survive the night.** `Modbus::listen()` records why it failed
+  and the caller logs one line per failure. `AppLog::add()` collapses
+  identical consecutive entries into `last message repeated Nx` (flushed every
+  100), so a sleeping inverter cannot push the history — including the
+  loop-watchdog report — out of the 2 kB ring.
 - `util/Health.h` is the supervisor of last resort, evaluated once a minute:
   WiFi down 2 min → `WiFi.reconnect()`; down 30 min → reboot; free heap < 6 kB
   or largest block < 4 kB for 5 consecutive samples → reboot. Single dips and

@@ -1,6 +1,7 @@
 #include "Inverter.h"
 #include "Config.h"
 #include "PassiveWriteCache.h"
+#include "inverter/Derived.h"
 #include "util/AppLog.h"
 
 bool Inverter::readBlock(uint16_t start, uint8_t count,
@@ -24,8 +25,8 @@ uint32_t Inverter::u32(const uint8_t* b, uint16_t reg, uint16_t base) {
 }
 
 bool Inverter::readGridBlock() {
-    uint8_t grid[88], sz = 0;
-    if (!readBlock(REG_GRID_START, REG_GRID_COUNT, grid, sz) || sz < 88)
+    uint8_t grid[REG_GRID_COUNT * 2], sz = 0;
+    if (!readBlock(REG_GRID_START, REG_GRID_COUNT, grid, sz) || sz < sizeof(grid))
         return false;
     _data.gridFreq      = u16(grid, REG_GRID_FREQ,    REG_GRID_START) / 100.0f;
     _data.inverterPower = s16(grid, REG_INV_POWER,    REG_GRID_START) * 10L;
@@ -34,16 +35,14 @@ bool Inverter::readGridBlock() {
     _data.gridVoltageL2 = u16(grid, REG_GRID_V_L2,    REG_GRID_START) / 10.0f;
     _data.gridVoltageL3 = u16(grid, REG_GRID_V_L3,    REG_GRID_START) / 10.0f;
     _data.loadPower     = s16(grid, REG_LOAD_POWER,   REG_GRID_START) * 10L;
-    _data.inverterSelfPower = inverterComputeSelfPower(
-        _data.pvPower, _data.batteryPower, _data.inverterPower);
     _data.sampleSeq++;
     if (_data.sampleSeq == 0) _data.sampleSeq = 1;
     return true;
 }
 
 bool Inverter::readPvBlock() {
-    uint8_t pv[12], sz = 0;
-    if (!readBlock(REG_PV_START, REG_PV_COUNT, pv, sz) || sz < 12)
+    uint8_t pv[REG_PV_COUNT * 2], sz = 0;
+    if (!readBlock(REG_PV_START, REG_PV_COUNT, pv, sz) || sz < sizeof(pv))
         return false;
     _data.pv1Voltage = u16(pv, REG_PV1_V, REG_PV_START) / 10.0f;
     _data.pv1Current = u16(pv, REG_PV1_A, REG_PV_START) / 100.0f;
@@ -54,14 +53,12 @@ bool Inverter::readPvBlock() {
     // Sum MPPT1 + MPPT2 directly (10 W resolution) instead of a second round
     // trip to 0x05C4 (100 W resolution, unsupported on some G3 firmwares).
     _data.pvPower    = _data.pv1Power + _data.pv2Power;
-    _data.inverterSelfPower = inverterComputeSelfPower(
-        _data.pvPower, _data.batteryPower, _data.inverterPower);
     return true;
 }
 
 bool Inverter::readBattBlock() {
-    uint8_t bat[28], sz = 0;
-    if (!readBlock(REG_BATT_START, REG_BATT_COUNT, bat, sz) || sz < 28)
+    uint8_t bat[REG_BATT_COUNT * 2], sz = 0;
+    if (!readBlock(REG_BATT_START, REG_BATT_COUNT, bat, sz) || sz < sizeof(bat))
         return false;
     _data.battVoltage  = u16(bat, REG_BATT_V,     REG_BATT_START) / 10.0f;
     _data.battCurrent  = s16(bat, REG_BATT_A,     REG_BATT_START) / 100.0f;
@@ -77,14 +74,12 @@ bool Inverter::readBattBlock() {
     _data.batt2SOC     = u16(bat, REG_BATT2_SOC,  REG_BATT_START);
     _data.batt2SOH     = u16(bat, REG_BATT2_SOH,  REG_BATT_START);
     _data.batt2Cycles  = u16(bat, REG_BATT2_CYC,  REG_BATT_START);
-    _data.inverterSelfPower = inverterComputeSelfPower(
-        _data.pvPower, _data.batteryPower, _data.inverterPower);
     return true;
 }
 
 bool Inverter::readSysBlock() {
-    uint8_t sys[46], sz = 0;
-    if (!readBlock(REG_SYS_START, REG_SYS_COUNT, sys, sz) || sz < 46)
+    uint8_t sys[REG_SYS_COUNT * 2], sz = 0;
+    if (!readBlock(REG_SYS_START, REG_SYS_COUNT, sys, sz) || sz < sizeof(sys))
         return false;
     _data.runState     = u16(sys, REG_RUNSTATE, REG_SYS_START);
     _data.inverterTemp = s16(sys, REG_INV_TEMP, REG_SYS_START);
@@ -93,8 +88,8 @@ bool Inverter::readSysBlock() {
 }
 
 bool Inverter::readBattTotBlock() {
-    uint8_t bt[6], sz = 0;
-    if (!readBlock(REG_BATTTOT_START, REG_BATTTOT_COUNT, bt, sz) || sz < 6)
+    uint8_t bt[REG_BATTTOT_COUNT * 2], sz = 0;
+    if (!readBlock(REG_BATTTOT_START, REG_BATTTOT_COUNT, bt, sz) || sz < sizeof(bt))
         return false;
     _data.battTotalPower = s16(bt, REG_BATT_TOT_W,   REG_BATTTOT_START) * 100L;
     _data.battAvgSOC     = u16(bt, REG_BATT_AVG_SOC, REG_BATTTOT_START);
@@ -103,8 +98,8 @@ bool Inverter::readBattTotBlock() {
 }
 
 bool Inverter::readEnergyBlock() {
-    uint8_t en[48], sz = 0;
-    if (!readBlock(REG_ENERGY_START, REG_ENERGY_COUNT, en, sz) || sz < 48)
+    uint8_t en[REG_ENERGY_COUNT * 2], sz = 0;
+    if (!readBlock(REG_ENERGY_START, REG_ENERGY_COUNT, en, sz) || sz < sizeof(en))
         return false;
     _data.todayGeneration  = u32(en, REG_GEN_TODAY, REG_ENERGY_START) / 100.0f;
     _data.totalGeneration  = u32(en, REG_GEN_TOTAL, REG_ENERGY_START) / 10.0f;
@@ -118,6 +113,7 @@ bool Inverter::readEnergyBlock() {
     _data.totalCharged     = u32(en, REG_CHG_TOTAL, REG_ENERGY_START) / 10.0f;
     _data.todayDischarged  = u32(en, REG_DIS_TODAY, REG_ENERGY_START) / 100.0f;
     _data.totalDischarged  = u32(en, REG_DIS_TOTAL, REG_ENERGY_START) / 10.0f;
+    inverterDeriveEnergy(_data);
     return true;
 }
 
@@ -128,11 +124,17 @@ bool Inverter::readWorkModeBlock() {
     return true;
 }
 
+bool Inverter::track(InverterBlock b, bool ok) {
+    if (ok) _data.blockOk |= b;
+    else    _data.blockOk &= (uint8_t)~b;
+    return ok;
+}
+
 // Cooperative 1-block-per-tick state machine: keeps each scheduler tick under
 // ~60 ms instead of blocking the loop across 4-8 back-to-back Modbus frames.
 bool Inverter::pollStep() {
     if (_error) {
-        if (!readWorkModeBlock()) {
+        if (!track(BLOCK_WORKMODE, readWorkModeBlock())) {
             _data.valid = false;
             return false;
         }
@@ -148,69 +150,34 @@ bool Inverter::pollStep() {
     bool stepOk = true;
     switch (_pollStep) {
     case POLL_GRID:
-        stepOk = readGridBlock();
+        stepOk = track(BLOCK_GRID, readGridBlock());
         _data.valid = stepOk;
         if (!stepOk) { _error = true; return false; }
         break;
     case POLL_PV:
-        readPvBlock();
+        track(BLOCK_PV, readPvBlock());
         break;
     case POLL_BATT:
-        stepOk = readBattBlock();
+        stepOk = track(BLOCK_BATT, readBattBlock());
         if (!stepOk) { _error = true; return false; }
+        inverterDeriveFast(_data);   // grid, PV and battery are all in
         break;
     case POLL_SYS:
-        readSysBlock();
+        track(BLOCK_SYS, readSysBlock());
         break;
     case POLL_BATTTOT:
-        readBattTotBlock();
+        track(BLOCK_BATTTOT, readBattTotBlock());
         break;
     case POLL_ENERGY:
-        readEnergyBlock();
+        track(BLOCK_ENERGY, readEnergyBlock());
         break;
     case POLL_WORKMODE:
-        readWorkModeBlock();
+        track(BLOCK_WORKMODE, readWorkModeBlock());
         break;
     }
 
     _pollStep = inverterNextPollStep(_pollStep, _slowCycle);
     return stepOk;
-}
-
-// Full-cycle synchronous poll (used by tests and one-shot callers)
-bool Inverter::readSensors() {
-    const bool recovering = _error;
-    if (recovering && !readWorkModeBlock()) {
-        _data.valid = false;
-        return false;
-    }
-
-    bool gridOk = readGridBlock();
-    yield();
-    readPvBlock();
-    yield();
-    bool battOk = readBattBlock();
-    yield();
-
-    if (gridOk && inverterSlowPollDue(recovering, _slowTick, SLOW_POLL_DIV)) {
-        readSysBlock();     yield();
-        readBattTotBlock(); yield();
-        readEnergyBlock();  yield();
-        if (!recovering) readWorkModeBlock();
-    }
-
-    bool ok = gridOk && battOk;
-    _data.valid = gridOk;
-    _error = !ok;
-    if (ok) {
-        char lb[64];
-        snprintf(lb, sizeof(lb), "OK soc=%d grid=%d pv=%d batt=%d",
-                 _data.batterySOC, (int)_data.gridPower, (int)_data.pvPower, (int)_data.batteryPower);
-        appLog.add("INV", lb);
-    } else {
-        appLog.add("INV", "readSensors fast fail");
-    }
-    return ok;
 }
 
 bool Inverter::readSerialNumber() {
@@ -290,15 +257,4 @@ bool Inverter::sendPassiveRange(int32_t minP, int32_t maxP) {
         _cmdCacheValid = false;   // force retry on next reconcile/update tick
     }
     return ok;
-}
-
-// Reads back 0x1187..0x118C (Gdes, Blo, Bup) to confirm the inverter accepted
-// and retained the asymmetric [expectedMin, expectedMax] passive window.
-bool Inverter::verifyPassiveRange(int32_t expectedMin, int32_t expectedMax) {
-    uint8_t buf[12], sz = 0;
-    if (!readBlock(REG_PASSIVE_CTRL, 6, buf, sz) || sz < 12) return false;
-    int32_t gdes = (int32_t)u32(buf, REG_PASSIVE_CTRL,     REG_PASSIVE_CTRL);
-    int32_t blo  = (int32_t)u32(buf, REG_PASSIVE_CTRL + 2, REG_PASSIVE_CTRL);
-    int32_t bup  = (int32_t)u32(buf, REG_PASSIVE_CTRL + 4, REG_PASSIVE_CTRL);
-    return gdes == 0 && blo == expectedMin && bup == expectedMax;
 }

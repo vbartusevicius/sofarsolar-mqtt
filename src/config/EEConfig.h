@@ -11,11 +11,13 @@ public:
     bool load();
     void save();
 
-    char*       name()     { return _name; }
-    char*       mqttHost() { return _host; }
-    char*       mqttPort() { return _port; }
-    char*       mqttUser() { return _user; }
-    char*       mqttPass() { return _pass; }
+    // Setters truncate to the persisted field length; nothing outside this
+    // class writes into the buffers directly.
+    void setName(const char* v)     { copyField(_name, sizeof(_name), v); }
+    void setMqttHost(const char* v) { copyField(_host, sizeof(_host), v); }
+    void setMqttPort(const char* v) { copyField(_port, sizeof(_port), v); }
+    void setMqttUser(const char* v) { copyField(_user, sizeof(_user), v); }
+    void setMqttPass(const char* v) { copyField(_pass, sizeof(_pass), v); }
 
     const char* name()     const { return _name; }
     const char* mqttHost() const { return _host; }
@@ -35,7 +37,7 @@ public:
     const char* mode() const           { return _mode; }
     int32_t  chargePower() const       { return _chargePower; }
     int32_t  autoLimit() const         { return _autoLimit; }
-    void setMode(const char* m);
+    void setMode(const char* m)        { copyField(_mode, sizeof(_mode), m); }
     void setChargePower(int32_t w)     { _chargePower = w; }
     void setAutoLimit(int32_t w)       { _autoLimit = w; }
 
@@ -57,8 +59,12 @@ private:
 
     char    _mode[EE_MODE_LEN] = "auto";
     int32_t _chargePower       = 0;
-    int32_t _autoLimit         = 16384;
+    int32_t _autoLimit         = AUTO_LIMIT_DEFAULT;
 
+    static void copyField(char* dst, size_t cap, const char* src) {
+        strncpy(dst, src ? src : "", cap - 1);
+        dst[cap - 1] = '\0';
+    }
     static void    readEE(int off, int len, char* dst);
     static bool    writeEE(int off, int len, const char* v);
     static int16_t readEE16(int off);

@@ -46,14 +46,11 @@ void BatterySaver::disable() {
     _targetPower = 0;
 }
 
-void BatterySaver::toggle() {
-    _active ? disable() : enable();
-}
-
 // Option A (preferred): write the native [Blo=0, Bup=_maxPower] window once so
 // the inverter's own DSP tracks 0 W grid power without periodic RS485 writes.
-// Verified by reading back 0x1187..0x118C and watching live power flow; if
-// either check fails, falls back to Option B (the software accumulator loop).
+// Accepted if the FC16 write is acknowledged, then verified by watching live
+// power flow; if either check fails, falls back to Option B (the software
+// accumulator loop).
 void BatterySaver::update() {
     if (!_active) return;
 

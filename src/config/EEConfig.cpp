@@ -58,11 +58,6 @@ bool EEConfig::writeEE32(int off, int32_t v) {
     return changed;
 }
 
-void EEConfig::setMode(const char* m) {
-    strncpy(_mode, m, sizeof(_mode) - 1);
-    _mode[sizeof(_mode) - 1] = '\0';
-}
-
 bool EEConfig::load() {
     if ((char)EEPROM.read(EE_MAGIC) != '1') return false;
     readEE(EE_NAME, EE_NAME_LEN, _name);

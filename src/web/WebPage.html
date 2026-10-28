@@ -1,9 +1,4 @@
-#ifndef SOFAR_WEBPAGE_H
-#define SOFAR_WEBPAGE_H
-
-#include <Arduino.h>
-
-static const char PAGE_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Sofar Solar Monitor</title>
@@ -228,8 +223,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 </div>
 
 </div><script>
-var WM={0:"Self Use",1:"Time of Use",2:"Timing",3:"Passive",4:"Peak Shaving",5:"Off-Grid",6:"Generator",7:"Export Priority"};
-var RS={0:"Waiting",1:"Detection",2:"Grid-Connected",3:"EPS Off-Grid",4:"Recoverable Fault",5:"Permanent Fault",6:"Upgrading",7:"Self-Charging"};
 function sw(i){for(var k=0;k<3;k++){document.getElementById("pn"+k).className="pane"+(k===i?" active":"");document.getElementById("tb"+k).className="tab"+(k===i?" active":"");}}
 function el(id){return document.getElementById(id);}
 function row(a,b,c,d){return"<tr><td>"+a+'</td><td class="num">'+b+(c!==undefined?'</td><td class="num">'+c:"")+(d!==undefined?'</td><td class="num">'+d:"")+"</td></tr>";}
@@ -240,7 +233,7 @@ function u(){fetch("/json").then(function(r){return r.json()}).then(function(d){
   el("dm").className="dot "+(d.mqtt_ok?"on":"off");
   var pok=d.passive_mode_ok;
   el("dp").className="dot "+(pok?"on":"off");
-  el("dpt").textContent=pok?"Passive Mode":"Mode: "+(WM[d.working_mode]||d.working_mode);
+  el("dpt").textContent=pok?"Passive Mode":"Mode: "+(d.working_mode_name||d.working_mode);
   el("hdr-meta").textContent="SN: "+(d.serial_number||"--")+" \u00b7 FW: "+(d.firmware||"--");
 
   var b=el("bsb"),bs=d.battery_save,st=(d.bsave_strategy||"off").toUpperCase();
@@ -265,9 +258,7 @@ function u(){fetch("/json").then(function(r){return r.json()}).then(function(d){
   el("f-gr-v").textContent=(d.grid_voltage||0)+" / "+(d.grid_voltage_l2||0)+" / "+(d.grid_voltage_l3||0)+" V";
   el("f-gr-io").textContent="In "+(d.today_imp||0)+" \u00b7 Out "+(d.today_exp||0)+" kWh";
 
-  var tu=parseFloat(d.today_use)||0,ti=parseFloat(d.today_imp)||0;
-  var sp=tu>0.05?Math.min(100,Math.max(0,Math.round((tu-ti)*100/tu))):100;
-  el("f-hm-self").textContent="Self "+sp+"%";
+  el("f-hm-self").textContent="Self "+(d.self_sufficiency!==undefined?d.self_sufficiency:100)+"%";
   el("f-hm-w").textContent=(d.load_power||0)+" W";
   el("f-hm-day").textContent="Used today: "+(d.today_use||0)+" kWh";
   el("f-hm-src").textContent="From grid: "+(d.today_imp||0)+" kWh";
@@ -283,7 +274,7 @@ function u(){fetch("/json").then(function(r){return r.json()}).then(function(d){
   el("f-bt-io").textContent="In "+(d.today_chg||0)+" \u00b7 Out "+(d.today_dis||0)+" kWh";
 
   el("f-inv-self").textContent=(d.inverter_self_w||0)+" W";
-  el("f-inv-meta").innerHTML="AC Out: <b>"+(d.inverter_power||0)+" W</b><br>Inv: "+(d.inverter_temp||0)+" &deg;C &middot; HS: "+(d.heatsink_temp||0)+" &deg;C<br>"+(RS[d.run_state]||("State "+d.run_state))+" &middot; "+(WM[d.working_mode]||("Mode "+d.working_mode));
+  el("f-inv-meta").innerHTML="AC Out: <b>"+(d.inverter_power||0)+" W</b><br>Inv: "+(d.inverter_temp||0)+" &deg;C &middot; HS: "+(d.heatsink_temp||0)+" &deg;C<br>"+(d.run_state_name||("State "+d.run_state))+" &middot; "+(d.working_mode_name||("Mode "+d.working_mode));
 
   el("tb-pv").innerHTML=
     row("MPPT 1",(d.pv1_voltage||0)+" V",(d.pv1_current||0)+" A",(d.pv1_power||0)+" W")+
@@ -311,7 +302,8 @@ function u(){fetch("/json").then(function(r){return r.json()}).then(function(d){
   var sh="";
   function sc(l,v,c){sh+='<div class="scard"><div class="l">'+l+'</div><div class="v '+c+'">'+v+"</div></div>";}
   sc("UPTIME",uh+"h "+um+"m","w");
-  sc("PASSIVE MODE",pok?"ACTIVE":"OFF ("+d.working_mode+")",pok?"g":"r");
+  sc("PASSIVE MODE",pok?"ACTIVE":"OFF ("+(d.working_mode_name||d.working_mode)+")",pok?"g":"r");
+  sc("DATA",d.data_fresh?"FRESH":"STALE",d.data_fresh?"g":"y");
   sc("SAVER STRATEGY",st,st==="NATIVE"?"g":(st==="LOOP"?"y":"w"));
   sc("PASSIVE TIMEOUT",d.passive_timeout_s?d.passive_timeout_s+" s":"OFF",d.passive_timeout_s?"y":"g");
   sc("KEEP-ALIVE",d.keepalive_s?d.keepalive_s+" s":"NONE",d.keepalive_s?"y":"g");
@@ -356,6 +348,4 @@ fetch("/settings").then(function(r){return r.json()}).then(function(d){
   if(d.firmware!==undefined)el("fvw").value=d.firmware;
   if(d.touch_cal!==undefined)el("tcs").textContent=d.touch_cal?"calibrated":"not calibrated - gestures only";
 });
-</script></body></html>)rawliteral";
-
-#endif
+</script></body></html>

@@ -14,9 +14,9 @@ public:
 
     explicit BatterySaver(Inverter& inv) : _inv(inv) {}
 
+    // Driven only by ModeController, which owns the mode
     void enable();
     void disable();
-    void toggle();
 
     void update();
 

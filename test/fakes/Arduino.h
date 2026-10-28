@@ -42,6 +42,12 @@ inline char* ultoa(unsigned long val, char* s, int) {
     return s;
 }
 
+// AVR/ESP libc extension: caller's buffer must hold the result (16 B is ample)
+inline char* dtostrf(double val, signed char width, unsigned char prec, char* s) {
+    snprintf(s, 16, "%*.*f", (int)width, (int)prec, val);
+    return s;
+}
+
 struct FakeSerial {
     std::vector<uint8_t> rx;
     size_t               rxPos = 0;

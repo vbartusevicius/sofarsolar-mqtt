@@ -31,7 +31,8 @@
     X("batt_total_power", battTotalPower, "Battery Total Power",  "W",  "power",       "measurement") \
     X("batt_avg_soc",     battAvgSOC,     "Battery Avg SOC",      "%",  "battery",     "measurement") \
     X("batt_avg_soh",     battAvgSOH,     "Battery Avg SOH",      "%",  nullptr,       "measurement") \
-    X("working_mode",     workingMode,    "Working Mode",         "",   nullptr,       "measurement")
+    X("working_mode",     workingMode,    "Working Mode",         "",   nullptr,       "measurement") \
+    X("self_sufficiency", selfSufficiency,"Self Sufficiency Today","%", nullptr,       "measurement")
 
 #define SOFAR_TELEMETRY_FLOAT_FIELDS(X) \
     X("grid_freq",       gridFreq,         2, "Grid Frequency",           "Hz",  "frequency", "measurement") \

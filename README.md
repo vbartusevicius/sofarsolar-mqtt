@@ -26,17 +26,17 @@ Forked from [Sofar2mqtt](https://github.com/IgorYbema/Sofar2mqtt) and rewritten 
 - **Home Assistant** auto-discovery for 50+ entities (sensors, mode select, battery-saver switch, charge/auto power numbers) generated from a single `TelemetrySchema.h` definition
 - **Battery Saver** mode — uses the inverter's native `[0..maxPower]` passive window (`Option A`, 1 write on activation) with automatic closed-loop fallback to a sample-gated software loop (`Option B`)
 - **ILI9341 TFT** with 2×2 quadrant cards (`SOLAR`, `GRID`, `HOME`, `BATT` with graphical SOC bar) around a central `INV` hub (temperature + self-consumption W) and a `SYS` diagnostics/log tab
-- **Tabbed Web Dashboard** at `http://<device-ip>/` (`Overview`, `Settings`, `System & Log`) with grouped subsystem tables
+- **Tabbed Web Dashboard** at `http://<device-ip>/` (`Overview`, `Settings`, `System & Log`) with grouped subsystem tables, served gzipped (~6 kB) from `src/web/WebPage.html`
 - **WiFiManager** captive portal for first-time WiFi + MQTT setup
 - **Web firmware upload** — drop a `firmware.bin` in the web UI to flash over WiFi (no TLS, no cloud dependency) + **ArduinoOTA**
-- **85+ native GoogleTest cases** covering CRC16, frame bounds checking, passive write cache, native-window fallback, touch calibration/gestures, health supervisor, and end-to-end Modbus integration
+- **129 native GoogleTest cases** covering CRC16, frame bounds checking, passive write cache, native-window fallback, mode/command parsing, the state document, LCD text widths, log collapsing, touch calibration/gestures, health and loop watchdogs, and end-to-end Modbus integration
 
 ## MQTT Topics
 
 Subscribe to `<deviceName>/state` for a JSON payload containing:
 
 ### System
-`run_state`, `inverter_temp`, `heatsink_temp`, `inverter_self_w`
+`run_state`, `run_state_name`, `inverter_temp`, `heatsink_temp`, `inverter_self_w`
 
 ### Grid (3-Phase)
 `grid_freq`, `inverter_power`, `grid_power`, `grid_voltage` (L1), `grid_voltage_l2`, `grid_voltage_l3`, `load_power`
@@ -54,19 +54,24 @@ Subscribe to `<deviceName>/state` for a JSON payload containing:
 `batt_total_power`, `batt_avg_soc`, `batt_avg_soh`
 
 ### Energy (kWh)
-`today_gen`, `total_gen`, `today_use`, `total_use`, `today_imp`, `total_imp`, `today_exp`, `total_exp`, `today_chg`, `total_chg`, `today_dis`, `total_dis`
+`today_gen`, `total_gen`, `today_use`, `total_use`, `today_imp`, `total_imp`, `today_exp`, `total_exp`, `today_chg`, `total_chg`, `today_dis`, `total_dis`, `self_sufficiency` (% of today's use not imported)
+
+The lifetime `total_*` counters are kept for the Home Assistant Energy dashboard; the web UI shows only daily values.
 
 ### Status
-`working_mode`, `passive_mode_ok`, `battery_save`, `battery_save_target`, `bsave_strategy`, `passive_timeout_s`, `timeout_action`, `keepalive_s`, `modbus_ok`, `mqtt_ok`, `wifi_ok`, `uptime`, `free_heap`, `max_free_block`, `heap_frag`
+`working_mode`, `working_mode_name`, `passive_mode_ok`, `data_fresh` (grid, PV and battery blocks all read OK in their last attempt), `mode`, `charge_power`, `auto_limit`, `battery_save`, `battery_save_target`, `bsave_strategy`, `passive_timeout_s`, `timeout_action`, `keepalive_s`, `modbus_ok`, `mqtt_ok`, `wifi_ok`, `uptime`, `free_heap`, `max_free_block`, `heap_frag`
+
+`/json` on the web server returns the same document.
 
 ### Commands
 
-These topics require the inverter to be in **Passive Mode**. All commands disable battery saver first, except `/set/battery_save` itself.
+These topics require the inverter to be in **Passive Mode**. MQTT `<deviceName>/set/<key>` and the web endpoints `/api/<key>?v=<value>` share one parser (`src/control/Command.h`), so both accept exactly the same keys and values. Invalid values are rejected (logged on MQTT, HTTP 400 on the web), not guessed.
 
-- **`<deviceName>/set/battery_save`** — payload `on`, `true`, or `1` enables battery saver. Any other payload disables it.
-- **`<deviceName>/set/charge`** — payload is watts. Positive values charge the battery (e.g. `3000`), negative values discharge it (e.g. `-3000`).
-- **`<deviceName>/set/standby`** — payload is ignored. Sets inverter to standby (0 W output).
-- **`<deviceName>/set/auto`** — payload is watts (e.g. `5000`). Returns the inverter to autonomous mode with a charge/discharge limit of ±N watts. If the value is ≤ 0 or missing, defaults to ±16384 W (effectively unlimited).
+- **`battery_save`** — `on`/`true`/`1` enables battery saver, `off`/`false`/`0` disables it. **Off always returns to `auto`**, whether it comes from the LCD button, the web toggle or the Home Assistant switch. Turning it off while another mode is active leaves that mode alone. On the web endpoint, no value toggles.
+- **`mode`** — `auto`, `charge`, `standby` or `battery_saver` (exact names).
+- **`charge`** — watts, clamped to ±20000. Positive values charge the battery (e.g. `3000`), negative values discharge it (e.g. `-3000`).
+- **`standby`** — payload is ignored. Sets inverter to standby (0 W output).
+- **`auto`** — watts, clamped to 100–20000 (e.g. `5000`). Returns the inverter to autonomous mode with a charge/discharge limit of ±N watts. A missing value defaults to ±16384 W.
 
 ### Battery Saver
 
@@ -74,7 +79,7 @@ When enabled, Battery Saver first configures the HYD's native passive window (`G
 
 ### Inverter flash protection
 
-The passive-mode register block lives in the inverter's non-volatile memory, which has a limited write endurance. Writes are therefore minimised aggressively (all constants in `Config.h`):
+The passive-mode register block lives in the inverter's non-volatile memory, which has a limited write endurance. Writes are therefore minimised aggressively (all constants in `src/Tuning.h`):
 
 - Target changes smaller than `BSAVE_MIN_DELTA` (100 W) are **not written** (hysteresis).
 - An unchanged command is **not re-sent at all** by default. Earlier versions re-sent every 45 s on the inherited assumption that "the inverter times out passive mode after ~60 s". That is wrong for the HYD: the passive timeout is register `0x1184`, its factory default is `0` (disabled), and the shortest selectable value is 300 s — there is no 60 s setting. The firmware now reads `0x1184` at boot and hourly: `0` means no keep-alive writes ever, and any other value re-sends at half the timeout. The old behaviour was ~1,900 pointless writes/day.
@@ -95,7 +100,7 @@ The protection parameters are runtime-configurable in the web UI (**Battery Save
 | Max power (W) | 20000 | 0–20000 | Charge ceiling (matches HYD 20 KTL) |
 | Idle lapse (min) | 10 | 1–60 | Sustained 0 W target before writes stop entirely |
 
-Keep-alive is no longer a setting: it is derived from the inverter's own `0x1184`, and the detected value ("disabled — no keep-alive writes", or the timeout, its action, and the resulting interval) is shown read-only in the same panel. All remaining values are clamped server-side. The compiled defaults in `Config.h` are used for fresh devices.
+Keep-alive is no longer a setting: it is derived from the inverter's own `0x1184`, and the detected value ("disabled — no keep-alive writes", or the timeout, its action, and the resulting interval) is shown read-only in the same panel. All remaining values are clamped server-side. The compiled defaults in `src/Tuning.h` are used for fresh devices.
 
 The battery saver automatically tracks available solar surplus.
 
@@ -112,13 +117,17 @@ The device is meant to run unattended for months. The failure modes that matter 
 
 **`millis()` wraparound (every 49.7 days).** All elapsed-time checks use the unsigned `now - last >= interval` form, which is wrap-safe. A timestamp is never used as its own "unset" marker, because `millis()` legitimately returns 0 at boot and again at every wrap — timers that need an inactive state carry an explicit `bool` beside the timestamp (`BatterySaver::_zeroTiming`, `HealthState::wifiDown`). Wraparound cases are covered by native tests.
 
-**Untrusted Modbus response lengths.** The byte count in an FC03 response arrives on the wire, and `readSensors()` reads into buffers as small as 2 bytes. A late reply to a previous, larger request — a well-formed frame with a valid CRC, just not the one that was asked for — used to be copied over the caller's stack. `modbusPayloadLen()` (`src/modbus/RespCheck.h`, unit-tested) validates the claimed length against both the received frame and the destination capacity, and `Inverter::readBlock` takes the capacity from the array type so a buffer cannot be resized without its bound following it.
+**Untrusted Modbus response lengths.** The byte count in an FC03 response arrives on the wire, and `Inverter::pollStep()` reads into buffers as small as 2 bytes. A late reply to a previous, larger request — a well-formed frame with a valid CRC, just not the one that was asked for — used to be copied over the caller's stack. `modbusPayloadLen()` (`src/modbus/RespCheck.h`, unit-tested) validates the claimed length against both the received frame and the destination capacity, and `Inverter::readBlock` takes the capacity from the array type so a buffer cannot be resized without its bound following it.
 
 **Bounded Modbus reads.** A response read has a hard wall-clock budget (`MODBUS_LISTEN_BUDGET_MS`). Without it, a bus that keeps delivering bytes addressed to another slave holds the read loop at its first byte forever, since every skipped byte restarts the first-byte timeout. With the link down (inverter asleep, RS485 unplugged) a single cheap probe read is attempted instead of all nine blocks, so a dead link costs one timeout per cycle rather than nine.
 
 **Heap fragmentation.** On a chip with ~40 kB of heap, fragmentation kills long-running firmware sooner than leaks do. Nothing on a repeating path allocates: the LCD log view and `/log` walk the log ring buffer in place, `/json` streams the document straight to the socket, MQTT state is streamed with `beginPublish`/`endPublish`, and the SYS tab formats the IP from its octets rather than calling `toString()`. Heap, largest free block, fragmentation percentage and the low-water mark are visible in the web UI, the LCD SYS tab and MQTT.
 
 **Watchdog.** The main loop is cooperative — no `delay()` over 20 ms outside serial gaps, and the Modbus wait loop yields. Blocking network calls are not attempted when they can only time out (MQTT does not try to connect while WiFi is down).
+
+**Loop watchdog** (`src/util/LoopWatchdog.h`). The hardware watchdog only fires when nothing yields for ~8 s, so a call that blocks *while yielding* — a TCP write into a stalled socket — freezes the device without ever resetting it. A 1 s timer hard-resets the chip if `loop()` has not completed for 120 s. Every loop step records its stage in RTC memory, and the next boot logs `[SYS] loop stalled in '<stage>'` (or `crashed in '<stage>'` after a watchdog/exception reset). JSON is never serialized byte-by-byte into a socket: `util/ChunkedWriter.h` batches 256 B and stops at the first failed write.
+
+**Log flooding.** Identical consecutive log entries are counted, not stored (`last message repeated Nx`), so an inverter asleep overnight cannot push the useful history out of the 2 kB log ring.
 
 **Supervisor of last resort** (`src/util/Health.h`, unit-tested). Evaluated once a minute for the two states that cannot be recovered from in software:
 
@@ -160,6 +169,8 @@ pio run -t upload  # flash via USB
 
 IDE note: `.clangd` is machine-specific and gitignored; `tools/gen_clangd.py` regenerates it automatically on every build (or run `python3 tools/gen_clangd.py` manually).
 
+The web UI is edited as plain HTML in `src/web/WebPage.html` (open it directly in a browser to work on it). `tools/embed_web.py` runs before every build and generates the gzipped `src/web/WebPage.gz.h` (gitignored).
+
 ### Dependencies (auto-installed)
 
 - Adafruit ILI9341, Adafruit GFX Library
@@ -186,7 +197,7 @@ Resistive panels have no absolute coordinate system: the XPT2046 reports a 12-bi
 
 | Gesture | Action |
 |---|---|
-| Tap | Toggle battery saver (FLOW tab) |
+| Tap | Toggle battery saver (FLOW tab); off returns to `auto` |
 | Hold 0.8 s | Switch tab |
 | Hold 4 s | Start touch calibration |
 | Tap while dimmed | Wake the backlight |

@@ -2,13 +2,14 @@
 #define SOFAR_DISPLAY_H
 
 #include <Adafruit_ILI9341.h>
-#include <XPT2046_Touchscreen.h>
+#include "display/FlowModel.h"
 #include "display/TouchCal.h"
+#include "display/TouchInput.h"
 
 struct InverterData;
-class  BatterySaver;
-class  ModeController;
 
+// Draws what FlowModel says; TouchInput turns presses into events. Display
+// depends on no control or network class: the caller passes a UiStatus.
 class Display {
 public:
     Display();
@@ -17,63 +18,42 @@ public:
     void showSplash(const char* line1, const char* line2);
 
     // FLOW tab = power-flow diagram, SYS tab = system overview + log
-    void update(const InverterData& inv, const BatterySaver& bs,
-                const ModeController& ctrl, const char* serialNumber,
-                bool wifiOk, bool modbusOk, bool mqttOk);
+    void update(const InverterData& inv, const UiStatus& ui);
 
+    // true when the user asked to toggle the battery saver
     bool pollTouch();
     void handleDimming();
     void startCalibration();
-    void setTouchCal(const TouchCal& c) { _cal = c; }
-    const TouchCal& touchCal() const    { return _cal; }
-    bool calibrating() const            { return _calStep < CAL_DONE; }
-    void onCalibrated(void (*cb)(const TouchCal&)) { _calSaved = cb; }
+    void setTouchCal(const TouchCal& c) { _touch.setCal(c); }
+    const TouchCal& touchCal() const    { return _touch.cal(); }
+    bool calibrating() const            { return _touch.calibrating(); }
+    void onCalibrated(void (*cb)(const TouchCal&)) { _touch.onCalibrated(cb); }
 
 private:
     enum Tab : uint8_t { TAB_FLOW = 0, TAB_SYS = 1 };
-    enum CalStep : uint8_t { CAL_A = 0, CAL_B, CAL_C, CAL_DONE };
+    enum Align : uint8_t { AL_LEFT, AL_CENTER, AL_RIGHT };
 
-    Adafruit_ILI9341      _tft;
-    XPT2046_Touchscreen   _ts;
+    Adafruit_ILI9341 _tft;
+    TouchInput       _touch;
 
     Tab           _tab          = TAB_FLOW;
     uint8_t       _brightness   = 0;
     bool          _screenOn     = false;
-    bool          _touchedPrev  = false;
-    unsigned long _lastTouch    = 0;
     unsigned long _lastRedraw   = 0;
     unsigned long _lastDimStep  = 0;
     bool          _needFullDraw = true;
-    const char*   _sn           = "";
-    char          _touchDbg[40] = "";
-    unsigned long _pressStart   = 0;
-    unsigned long _lastPollAt   = 0;
-    unsigned long _lastDownAt   = 0;
-    bool          _calNotice    = false;
-    bool          _longFired    = false;
-
-    TouchCal      _cal;
-    uint8_t       _calStep      = CAL_DONE;
     bool          _calDrawn     = false;
-    bool          _calRetry     = false;
-    bool          _calIgnorePress = false;
-    TouchSample   _calRaw[3]    = {};
-    int32_t       _calSumX      = 0;
-    int32_t       _calSumY      = 0;
-    int16_t       _calCount     = 0;
-    void (*_calSaved)(const TouchCal&) = nullptr;
-    int16_t       _tapX         = -1;   // last press in screen pixels, -1 if unknown
-    int16_t       _tapY         = -1;
 
-    // Repaint only changed content — full redraws roll visibly over SPI
+    // Repaint only changed content — full redraws roll visibly over SPI.
+    // An empty cache string means "nothing drawn there yet".
     struct CardCache {
-        char     hdrRight[14] = "";
-        char     value[16]    = "";
-        char     row1[20]     = "";
-        char     row2[20]     = "";
-        int8_t   socPct       = -1;
-        uint16_t color        = 0;
-        bool     valid        = false;
+        char     hdr[14]   = "";
+        char     value[16] = "";
+        char     row1[20]  = "";
+        char     row2[20]  = "";
+        int8_t   soc       = -1;
+        uint16_t color     = 0;
+        bool     valid     = false;
     };
     struct HubCache {
         char     line1[16] = "";
@@ -81,23 +61,34 @@ private:
         uint16_t color     = 0;
         bool     valid     = false;
     };
-    // Arrows show direction only: the magnitude is already in the node boxes
     struct ArrowCache { bool dir = false; bool drawn = false; uint16_t color = 0; };
-    static constexpr uint8_t SYS_LINES = 6;
 
     CardCache  _cdSolar, _cdGrid, _cdHome, _cdBatt;
     HubCache   _hubInv;
     ArrowCache _arPv, _arGrid, _arHome, _arBatt;
     char       _btnLine1[20] = "";
-    char       _btnLine2[36] = "";
+    char       _btnLine2[40] = "";
     bool       _btnValid     = false;
     bool       _btnActive    = false;
-    char       _sysCache[SYS_LINES][64];
-    bool       _sysValid  = false;
+    char       _sysCache[FM_SYS_LINES][64];
     uint8_t    _dotsCache = 0xFF;
     bool       _dotsValid = false;
     unsigned int _logSerial = 0;
     bool         _logValid  = false;
+
+    static uint16_t toneColor(Tone t);
+    static int16_t  alignX(int16_t x, int16_t w, Align a, const char* s, uint8_t size);
+
+    // Erases the cached string and prints `next` in its place, if it changed
+    template <size_t N>
+    void drawCached(char (&cache)[N], int16_t x, int16_t w, Align a, int16_t y,
+                    uint8_t size, uint16_t fg, uint16_t bg, const char* next) {
+        if (strcmp(cache, next) == 0) return;
+        printOver(alignX(x, w, a, cache, size), alignX(x, w, a, next, size),
+                  y, size, fg, bg, cache, next);
+        strncpy(cache, next, N - 1);
+        cache[N - 1] = '\0';
+    }
 
     void setTab(Tab t);
     void invalidateCaches();
@@ -105,26 +96,19 @@ private:
     void drawTopLinkDots(bool wifiOk, bool modbusOk, bool mqttOk);
     void drawHint();
     void drawHintLine(const char* text);
-    void redrawCard(int16_t x, int16_t y, int16_t w, int16_t h,
-                    const char* title, const char* hdrRight,
-                    const char* value, const char* row1, const char* row2,
-                    int8_t socPct, uint16_t color, CardCache& c);
-    void redrawHub(const InverterData& inv, bool passiveOk);
+    void redrawCard(int16_t x, int16_t y, const CardText& t, CardCache& c);
+    void redrawHub(const HubText& t);
     void drawElbowArm(uint8_t arm, bool toHub, uint16_t color);
     void redrawArm(uint8_t arm, bool visible, bool toHub,
                    uint16_t color, ArrowCache& c);
+    void redrawButton(const ButtonText& b);
     void printOver(int16_t x0, int16_t x1, int16_t y, uint8_t size,
                    uint16_t fg, uint16_t bg, const char* prev, const char* next);
-    void updateFlow(const InverterData& inv, const BatterySaver& bs,
-                    const ModeController& ctrl);
-    void updateSys(const InverterData& inv, const BatterySaver& bs,
-                   const ModeController& ctrl, const char* sn);
-    void drawCentered(int16_t y, const String& text, uint8_t size,
-                      uint16_t fg);
-    void sysPrint(uint8_t idx, int16_t y, const char* text);
+    void updateFlow(const InverterData& inv, const UiStatus& ui);
+    void updateSys(const InverterData& inv, const UiStatus& ui);
+    void drawCentered(int16_t y, const char* text, uint8_t size, uint16_t fg);
     void drawLogTail(int16_t y);
     void drawCalScreen();
-    bool calPollTouch(bool down, unsigned long now);
     void wake();
 };
 

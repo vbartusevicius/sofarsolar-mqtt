@@ -37,14 +37,14 @@ TEST_F(EEConfigTest, UnchangedSaveDoesNotCommitToFlash) {
 
 TEST_F(EEConfigTest, ChangedFieldCommitsOnce) {
     cfg.save();
-    cfg.mqttHost()[0] = 'b'; cfg.mqttHost()[1] = '\0';   // "" → "b"
+    cfg.setMqttHost("b");   // "" → "b"
     cfg.save();
     EXPECT_EQ(EEPROM.commitCalls, 2u);
 }
 
 TEST_F(EEConfigTest, SaveLoadRoundtrip) {
-    strncpy(cfg.name(), "tester", EE_NAME_LEN);
-    strncpy(cfg.mqttHost(), "192.168.1.10", EE_HOST_LEN);
+    cfg.setName("tester");
+    cfg.setMqttHost("192.168.1.10");
     cfg.setBsaveDelta(250);
     cfg.save();
 
@@ -122,6 +122,41 @@ TEST_F(EEConfigTest, ModeChangeCommitsOnce) {
     cfg.setMode("standby");
     cfg.save();
     EXPECT_EQ(EEPROM.commitCalls, commits + 1);
+}
+
+TEST_F(EEConfigTest, SettersTruncateToFieldLength) {
+    cfg.setMqttPort("123456789");
+    EXPECT_EQ(strlen(cfg.mqttPort()), (size_t)(EE_PORT_LEN - 1));
+    cfg.setMqttUser(nullptr);
+    EXPECT_STREQ(cfg.mqttUser(), "");
+    cfg.save();
+    EEConfig fresh;
+    ASSERT_TRUE(fresh.load());
+    EXPECT_STREQ(fresh.mqttPort(), "12345");
+}
+
+TEST_F(EEConfigTest, AllControlFieldsRoundTrip) {
+    cfg.setMode("charge");
+    cfg.setChargePower(-4200);
+    cfg.setAutoLimit(12000);
+    cfg.setBsaveMaxPower(15000);
+    cfg.setIdleLapseMs(1800000UL);
+    TouchCal c;
+    c.valid = true; c.swap = true; c.xLo = 3800; c.xHi = 250; c.yLo = 300; c.yHi = 3700;
+    cfg.setTouchCal(c);
+    cfg.save();
+
+    EEConfig fresh;
+    ASSERT_TRUE(fresh.load());
+    EXPECT_STREQ(fresh.mode(), "charge");
+    EXPECT_EQ(fresh.chargePower(), -4200);
+    EXPECT_EQ(fresh.autoLimit(), 12000);
+    EXPECT_EQ(fresh.bsaveMaxPower(), 15000);
+    EXPECT_EQ(fresh.idleLapseMs(), 1800000UL);
+    EXPECT_TRUE(fresh.touchCal().valid);
+    EXPECT_TRUE(fresh.touchCal().swap);
+    EXPECT_EQ(fresh.touchCal().xLo, 3800);
+    EXPECT_EQ(fresh.touchCal().yHi, 3700);
 }
 
 // Longer names must be truncated, never overflow the 16-byte field.

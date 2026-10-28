@@ -7,9 +7,12 @@
 #include "inverter/Inverter.h"
 #include "control/BatterySaver.h"
 #include "network/MqttManager.h"
+#include "control/Command.h"
 #include "control/ModeController.h"
 #include "display/Display.h"
-#include "web/WebPage.h"
+#include "telemetry/LinkStatusNow.h"
+#include "telemetry/StateJson.h"
+#include "web/WebPage.gz.h"
 #include "util/AppLog.h"
 #include "util/ChunkedWriter.h"
 #include "Version.h"
@@ -31,14 +34,15 @@ void SofarWebServer::sendJson(const JsonDocument& doc) {
 
 void SofarWebServer::begin() {
     _server.on("/", [this]() {
-        _server.send_P(200, "text/html", PAGE_HTML);
+        _server.sendHeader("Content-Encoding", "gzip");
+        _server.send_P(200, "text/html", (PGM_P)PAGE_GZ, PAGE_GZ_LEN);
     });
 
     // Streamed straight to the socket: the web UI polls this every 5 s, and a
     // ~1.5 kB String per poll churned the heap for as long as a tab was open.
     _server.on("/json", [this]() {
         JsonDocument doc;
-        _mqtt.fillState(doc);
+        fillStateJson(doc, _inv, _bs, _ctrl, linkStatusNow(_mqtt.connected()));
         sendJson(doc);
     });
 
@@ -63,11 +67,11 @@ void SofarWebServer::begin() {
 
     _server.on("/command", [this]() {
         bool any = false;
-        if (_server.hasArg("mqtthost"))   { _server.arg("mqtthost").toCharArray(_cfg.mqttHost(), EE_HOST_LEN); any = true; }
-        if (_server.hasArg("mqttport"))   { _server.arg("mqttport").toCharArray(_cfg.mqttPort(), EE_PORT_LEN); any = true; }
-        if (_server.hasArg("mqttuser"))   { _server.arg("mqttuser").toCharArray(_cfg.mqttUser(), EE_USER_LEN); any = true; }
-        if (_server.hasArg("mqttpass"))   { _server.arg("mqttpass").toCharArray(_cfg.mqttPass(), EE_PASS_LEN); any = true; }
-        if (_server.hasArg("deviceName")) { _server.arg("deviceName").toCharArray(_cfg.name(), EE_NAME_LEN);   any = true; }
+        if (_server.hasArg("mqtthost"))   { _cfg.setMqttHost(_server.arg("mqtthost").c_str()); any = true; }
+        if (_server.hasArg("mqttport"))   { _cfg.setMqttPort(_server.arg("mqttport").c_str()); any = true; }
+        if (_server.hasArg("mqttuser"))   { _cfg.setMqttUser(_server.arg("mqttuser").c_str()); any = true; }
+        if (_server.hasArg("mqttpass"))   { _cfg.setMqttPass(_server.arg("mqttpass").c_str()); any = true; }
+        if (_server.hasArg("deviceName")) { _cfg.setName(_server.arg("deviceName").c_str());   any = true; }
         if (!any) { _server.send(400, "text/plain", "no parameters"); return; }
         _cfg.save();   // commits to flash only if a value actually changed
         _server.send(200, "text/plain", "OK");
@@ -75,35 +79,27 @@ void SofarWebServer::begin() {
         ESP.reset();
     });
 
-    _server.on("/api/battery_save", [this]() {
-        _ctrl.toggleBatterySaver();
-        JsonDocument doc;
-        doc["battery_save"] = _bs.isActive();
-        sendJson(doc);
-    });
-
-    _server.on("/api/mode", [this]() {
-        if (_server.hasArg("v")) _ctrl.setMode(_server.arg("v").c_str());
-        JsonDocument doc;
-        doc["mode"] = _ctrl.currentMode();
-        sendJson(doc);
-    });
-
-    _server.on("/api/charge", [this]() {
-        if (_server.hasArg("v")) _ctrl.setCharge(_server.arg("v").toInt());
-        JsonDocument doc;
-        doc["charge_power"] = _ctrl.chargePower();
-        doc["mode"] = _ctrl.currentMode();
-        sendJson(doc);
-    });
-
-    _server.on("/api/auto", [this]() {
-        if (_server.hasArg("v")) _ctrl.setAuto(_server.arg("v").toInt());
-        JsonDocument doc;
-        doc["auto_limit"] = _ctrl.autoLimit();
-        doc["mode"] = _ctrl.currentMode();
-        sendJson(doc);
-    });
+    // Same keys and parser as MQTT "<device>/set/<key>": /api/<key>?v=<value>
+    static const char* const CONTROL_KEYS[] = { "battery_save", "mode", "charge", "auto" };
+    for (const char* key : CONTROL_KEYS) {
+        char path[24];
+        snprintf(path, sizeof(path), "/api/%s", key);
+        _server.on(path, [this, key]() {
+            Command cmd;
+            String v = _server.arg("v");
+            if (!parseCommand(key, v.c_str(), cmd)) {
+                _server.send(400, "text/plain", "invalid value");
+                return;
+            }
+            _ctrl.apply(cmd);
+            JsonDocument doc;
+            doc["mode"]         = _ctrl.modeName();
+            doc["battery_save"] = _ctrl.saverActive();
+            doc["charge_power"] = _ctrl.chargePower();
+            doc["auto_limit"]   = _ctrl.autoLimit();
+            sendJson(doc);
+        });
+    }
 
     // applies immediately, no reboot; save() commits only on real changes
     _server.on("/api/tuning", [this]() {

@@ -1,14 +1,9 @@
 #include "Display.h"
-#include <ESP8266WiFi.h>
 #include <Fonts/Picopixel.h>
-#include "display/TouchGesture.h"
-#include "Config.h"
-#include "inverter/Inverter.h"
-#include "control/BatterySaver.h"
-#include "control/ModeController.h"
+#include "hw/Pins.h"
+#include "Tuning.h"
+#include "inverter/InverterData.h"
 #include "util/AppLog.h"
-#include "util/HeapStats.h"
-#include "Version.h"
 
 #define CLR_BG       ILI9341_BLACK
 #define CLR_PANEL    ILI9341_BLACK     // panels are outline-only for contrast
@@ -24,14 +19,14 @@
 
 #define BL_FULL      255   // ESP8266 analogWrite range is 255: 32 was 12% brightness
 
-#define CHAR_W         6   // classic GFX font is 6 px wide at size 1
+#define CHAR_W       FM_CHAR_W   // classic GFX font is 6 px wide at size 1
 
 #define TAB_H         28
 #define TAB_FLOW_X1   86
 #define TAB_SYS_X1   172
 
 // 2x2 Quadrant Card geometry + Central INV Hub (240x320 portrait)
-#define CD_W         108
+#define CD_W         FM_CARD_W
 #define CD_H          82
 #define CD_LX          4
 #define CD_RX        128
@@ -40,60 +35,72 @@
 
 #define HUB_X         76
 #define HUB_Y        123
-#define HUB_W         88
+#define HUB_W        FM_HUB_W
 #define HUB_H         40
 
 #define BTN_Y        260
 #define BTN_H         42
 #define HINT_Y       311
+#define SYS_Y0        33
+#define SYS_DY        10
 #define LOG_ROW_H      7   // Picopixel yAdvance
 #define LOG_BASELINE   5   // glyph height above the baseline
 #define LOG_COLS      60   // 232 px / ~4 px per Picopixel char, + NUL
 #define BTN_X          4
-#define BTN_W        232
-
-// Touch is gesture-based, not coordinate-based: panel wiring/rotation varies
-// between board revisions and cannot be calibrated blind.
-//   short tap  = toggle battery saver (FLOW tab)
-//   long press = switch tab
-#define TS_POLL_MS     30
-#define TS_LONG_MS    800
-#define TS_CAL_MS    4000   // hold this long to start touch calibration
-#define TS_MIN_TAP_MS  30
-#define TS_RELEASE_MS 250
+#define BTN_W        FM_BTN_W
 
 Display::Display()
     : _tft(PIN_TFT_CS, PIN_TFT_DC),
-      _ts(PIN_TOUCH_CS, PIN_TOUCH_IRQ)
+      _touch(PIN_TOUCH_CS, PIN_TOUCH_IRQ)
 {}
 
 void Display::begin() {
     _tft.begin();
     _tft.setRotation(2);             // portrait, USB at top
-    _ts.begin();
-    _ts.setRotation(1);
+    _touch.begin();
     analogWrite(PIN_TFT_LED, BL_FULL);
     _brightness = BL_FULL;
     _screenOn   = true;
-    _lastTouch  = millis();
     _needFullDraw = true;
 }
 
 void Display::showSplash(const char* line1, const char* line2) {
     _tft.fillScreen(CLR_BG);
-    drawCentered(120, String(line1), 2, ILI9341_WHITE);
-    drawCentered(150, String(line2), 2, CLR_PV);
+    drawCentered(120, line1, 2, ILI9341_WHITE);
+    drawCentered(150, line2, 2, CLR_PV);
 }
 
-
-void Display::drawCentered(int16_t y, const String& text, uint8_t size,
+void Display::drawCentered(int16_t y, const char* text, uint8_t size,
                            uint16_t fg)
 {
-    int16_t w = text.length() * CHAR_W * size;
     _tft.setTextSize(size);
     _tft.setTextColor(fg, CLR_BG);
-    _tft.setCursor((240 - w) / 2, y);
+    _tft.setCursor(alignX(0, 240, AL_CENTER, text, size), y);
     _tft.print(text);
+}
+
+uint16_t Display::toneColor(Tone t) {
+    switch (t) {
+    case Tone::Pv:        return CLR_PV;
+    case Tone::Export:    return CLR_EXPORT;
+    case Tone::Import:    return CLR_IMPORT;
+    case Tone::Charge:    return CLR_CHARGE;
+    case Tone::Discharge: return CLR_DISCHG;
+    case Tone::Neutral:   return ILI9341_WHITE;
+    }
+    return ILI9341_WHITE;
+}
+
+int16_t Display::alignX(int16_t x, int16_t w, Align a, const char* s,
+                        uint8_t size)
+{
+    int16_t tw = (int16_t)strlen(s) * CHAR_W * size;
+    switch (a) {
+    case AL_LEFT:   return x;
+    case AL_CENTER: return x + (w - tw) / 2;
+    case AL_RIGHT:  return x + w - tw;
+    }
+    return x;
 }
 
 // Erase the previous string exactly by reprinting it in the background
@@ -115,13 +122,13 @@ void Display::drawHintLine(const char* text) {
     _tft.fillRect(0, HINT_Y, 240, 8, CLR_BG);
     _tft.setTextSize(1);
     _tft.setTextColor(CLR_OFF, CLR_BG);
-    _tft.setCursor((240 - (int16_t)strlen(text) * CHAR_W) / 2, HINT_Y);
+    _tft.setCursor(alignX(0, 240, AL_CENTER, text, 1), HINT_Y);
     _tft.print(text);
 }
 
 void Display::drawHint() {
-    if (_calNotice) { drawHintLine("keep holding for calibration..."); return; }
-    if (_cal.valid) drawHintLine("tap tabs/button   hold: switch tab");
+    if (_touch.calNotice()) { drawHintLine("keep holding for calibration..."); return; }
+    if (_touch.cal().valid) drawHintLine("tap tabs/button   hold: switch tab");
     else drawHintLine(_tab == TAB_FLOW ? "tap: batt save  hold: switch tab"
                                        : "hold anywhere: switch tab");
 }
@@ -138,8 +145,7 @@ void Display::drawTabBar() {
         _tft.setTextSize(2);
         _tft.setTextColor(active ? ILI9341_WHITE : 0xC618,
                           active ? activeBg : barBg);
-        int16_t tw = strlen(label) * CHAR_W * 2;
-        _tft.setCursor(x + (TAB_FLOW_X1 - tw) / 2, 5);
+        _tft.setCursor(alignX(x, TAB_FLOW_X1, AL_CENTER, label, 2), 5);
         _tft.print(label);
         if (active)
             _tft.fillRect(x, TAB_H - 3, TAB_FLOW_X1, 3, CLR_PV);
@@ -168,11 +174,10 @@ void Display::drawTopLinkDots(bool wifiOk, bool modbusOk, bool mqttOk) {
     }
 }
 
-void Display::redrawCard(int16_t x, int16_t y, int16_t w, int16_t h,
-                         const char* title, const char* hdrRight,
-                         const char* value, const char* row1, const char* row2,
-                         int8_t socPct, uint16_t color, CardCache& c)
+void Display::redrawCard(int16_t x, int16_t y, const CardText& t, CardCache& c)
 {
+    const int16_t w = CD_W, h = CD_H;
+    uint16_t color = toneColor(t.tone);
     if (!c.valid || c.color != color) {
         _tft.fillRect(x, y, w, h, CLR_BG);
         _tft.drawRect(x, y, w, h, color);
@@ -180,68 +185,42 @@ void Display::redrawCard(int16_t x, int16_t y, int16_t w, int16_t h,
         _tft.setTextSize(1);
         _tft.setTextColor(CLR_LABEL, CLR_PANEL);
         _tft.setCursor(x + 4, y + 4);
-        _tft.print(title);
-        c.valid       = true;
-        c.color       = color;
-        c.hdrRight[0] = c.value[0] = c.row1[0] = c.row2[0] = '\0';
-        c.socPct      = -1;
+        _tft.print(t.title);
+        c.valid = true;
+        c.color = color;
+        c.hdr[0] = c.value[0] = c.row1[0] = c.row2[0] = '\0';
+        c.soc   = -1;
     }
 
-    if (strcmp(c.hdrRight, hdrRight) != 0) {
-        int16_t ox = x + w - 4 - (int16_t)strlen(c.hdrRight) * CHAR_W;
-        int16_t nx = x + w - 4 - (int16_t)strlen(hdrRight)   * CHAR_W;
-        printOver(ox, nx, y + 4, 1, color, CLR_PANEL, c.hdrRight, hdrRight);
-        strncpy(c.hdrRight, hdrRight, sizeof(c.hdrRight) - 1);
-        c.hdrRight[sizeof(c.hdrRight) - 1] = '\0';
-    }
+    const bool    sparse = t.row2[0] == '\0' && t.soc < 0;
+    const int16_t ix = x + 4, iw = w - 8;
+    drawCached(c.hdr,   ix, iw, AL_RIGHT,  y + 4, 1, color, CLR_PANEL, t.hdr);
+    drawCached(c.value, ix, iw, AL_CENTER, sparse ? y + 24 : y + 19, 2,
+               color, CLR_PANEL, t.value);
+    drawCached(c.row1,  ix, iw, AL_CENTER, sparse ? y + 54 : y + 43, 1,
+               CLR_LABEL, CLR_PANEL, t.row1);
 
-    int16_t valY = (row2[0] == '\0' && socPct < 0) ? (y + 24) : (y + 19);
-    if (strcmp(c.value, value) != 0) {
-        int16_t ox = x + (w - (int16_t)strlen(c.value) * CHAR_W * 2) / 2;
-        int16_t nx = x + (w - (int16_t)strlen(value)   * CHAR_W * 2) / 2;
-        printOver(ox, nx, valY, 2, color, CLR_PANEL, c.value, value);
-        strncpy(c.value, value, sizeof(c.value) - 1);
-        c.value[sizeof(c.value) - 1] = '\0';
-    }
-
-    int16_t r1Y = (row2[0] == '\0' && socPct < 0) ? (y + 54) : (y + 43);
-    if (strcmp(c.row1, row1) != 0) {
-        int16_t ox = x + (w - (int16_t)strlen(c.row1) * CHAR_W) / 2;
-        int16_t nx = x + (w - (int16_t)strlen(row1)   * CHAR_W) / 2;
-        printOver(ox, nx, r1Y, 1, CLR_LABEL, CLR_PANEL, c.row1, row1);
-        strncpy(c.row1, row1, sizeof(c.row1) - 1);
-        c.row1[sizeof(c.row1) - 1] = '\0';
-    }
-
-    if (socPct >= 0) {
-        if (c.socPct != socPct) {
-            c.socPct = socPct;
+    if (t.soc >= 0) {
+        if (c.soc != t.soc) {
+            c.soc = t.soc;
             int16_t bx = x + 6, by = y + 58, bw = w - 12, bh = 14;
             _tft.drawRect(bx, by, bw, bh, CLR_LABEL);
             int16_t innerMax = bw - 4;
-            int16_t fillW    = (int16_t)((int32_t)innerMax * socPct / 100);
-            uint16_t barClr  = socPct >= 50 ? CLR_ACTIVE
-                             : (socPct >= 20 ? CLR_PV : CLR_IMPORT);
+            int16_t fillW    = (int16_t)((int32_t)innerMax * t.soc / 100);
+            uint16_t barClr  = t.soc >= 50 ? CLR_ACTIVE
+                             : (t.soc >= 20 ? CLR_PV : CLR_IMPORT);
             if (fillW > 0)
                 _tft.fillRect(bx + 2, by + 2, fillW, bh - 4, barClr);
             if (fillW < innerMax)
                 _tft.fillRect(bx + 2 + fillW, by + 2, innerMax - fillW, bh - 4, CLR_BG);
         }
-    } else if (strcmp(c.row2, row2) != 0) {
-        int16_t ox = x + (w - (int16_t)strlen(c.row2) * CHAR_W) / 2;
-        int16_t nx = x + (w - (int16_t)strlen(row2)   * CHAR_W) / 2;
-        printOver(ox, nx, y + 58, 1, CLR_LABEL, CLR_PANEL, c.row2, row2);
-        strncpy(c.row2, row2, sizeof(c.row2) - 1);
-        c.row2[sizeof(c.row2) - 1] = '\0';
+    } else {
+        drawCached(c.row2, ix, iw, AL_CENTER, y + 58, 1, CLR_LABEL, CLR_PANEL, t.row2);
     }
 }
 
-void Display::redrawHub(const InverterData& inv, bool passiveOk) {
-    uint16_t border = passiveOk ? CLR_TARGET : CLR_IMPORT;
-    char l1[16], l2[16];
-    snprintf(l1, sizeof(l1), "INV %dC", (int)inv.inverterTemp);
-    snprintf(l2, sizeof(l2), "%ld W",   (long)inv.inverterSelfPower);
-
+void Display::redrawHub(const HubText& t) {
+    uint16_t border = t.passiveOk ? CLR_TARGET : CLR_IMPORT;
     if (!_hubInv.valid || _hubInv.color != border) {
         _tft.fillRect(HUB_X, HUB_Y, HUB_W, HUB_H, CLR_BG);
         _tft.drawRect(HUB_X, HUB_Y, HUB_W, HUB_H, border);
@@ -249,20 +228,10 @@ void Display::redrawHub(const InverterData& inv, bool passiveOk) {
         _hubInv.color = border;
         _hubInv.line1[0] = _hubInv.line2[0] = '\0';
     }
-    if (strcmp(_hubInv.line1, l1) != 0) {
-        int16_t ox = HUB_X + (HUB_W - (int16_t)strlen(_hubInv.line1) * CHAR_W) / 2;
-        int16_t nx = HUB_X + (HUB_W - (int16_t)strlen(l1)            * CHAR_W) / 2;
-        printOver(ox, nx, HUB_Y + 7, 1, CLR_LABEL, CLR_BG, _hubInv.line1, l1);
-        strncpy(_hubInv.line1, l1, sizeof(_hubInv.line1) - 1);
-        _hubInv.line1[sizeof(_hubInv.line1) - 1] = '\0';
-    }
-    if (strcmp(_hubInv.line2, l2) != 0) {
-        int16_t ox = HUB_X + (HUB_W - (int16_t)strlen(_hubInv.line2) * CHAR_W) / 2;
-        int16_t nx = HUB_X + (HUB_W - (int16_t)strlen(l2)            * CHAR_W) / 2;
-        printOver(ox, nx, HUB_Y + 23, 1, CLR_TARGET, CLR_BG, _hubInv.line2, l2);
-        strncpy(_hubInv.line2, l2, sizeof(_hubInv.line2) - 1);
-        _hubInv.line2[sizeof(_hubInv.line2) - 1] = '\0';
-    }
+    drawCached(_hubInv.line1, HUB_X, HUB_W, AL_CENTER, HUB_Y + 7,  1,
+               CLR_LABEL,  CLR_BG, t.line1);
+    drawCached(_hubInv.line2, HUB_X, HUB_W, AL_CENTER, HUB_Y + 23, 1,
+               CLR_TARGET, CLR_BG, t.line2);
 }
 
 // Draws one of the 4 L-shaped 2-px arms between a quadrant card and the hub:
@@ -311,6 +280,20 @@ void Display::redrawArm(uint8_t arm, bool visible, bool toHub,
     c.color = color;
 }
 
+void Display::redrawButton(const ButtonText& b) {
+    uint16_t bg = b.active ? 0x03E0 : 0x4000;
+    if (!_btnValid || _btnActive != b.active) {
+        _tft.fillRect(BTN_X, BTN_Y, BTN_W, BTN_H, bg);
+        _tft.drawRect(BTN_X, BTN_Y, BTN_W, BTN_H, b.active ? CLR_ACTIVE : CLR_IMPORT);
+        _btnValid  = true;
+        _btnActive = b.active;
+        _btnLine1[0] = _btnLine2[0] = '\0';   // force text repaint
+    }
+    uint16_t fg = b.active ? ILI9341_WHITE : 0xBDF7;
+    drawCached(_btnLine1, BTN_X, BTN_W, AL_CENTER, BTN_Y + 6,  2, fg, bg, b.line1);
+    drawCached(_btnLine2, BTN_X, BTN_W, AL_CENTER, BTN_Y + 28, 1, CLR_TARGET, bg, b.line2);
+}
+
 void Display::setTab(Tab t) {
     if (_tab == t) return;
     _tab = t;
@@ -322,18 +305,12 @@ void Display::invalidateCaches() {
     _hubInv.valid  = false;
     _arPv.drawn = _arGrid.drawn = _arHome.drawn = _arBatt.drawn = false;
     _btnValid = false;
-    _sysValid = false;
     for (auto& l : _sysCache) l[0] = '\0';
     _dotsValid = false;
     _logValid  = false;
 }
 
-
-void Display::update(const InverterData& inv, const BatterySaver& bs,
-                     const ModeController& ctrl, const char* sn,
-                     bool wifiOk, bool modbusOk, bool mqttOk)
-{
-    _sn = sn;
+void Display::update(const InverterData& inv, const UiStatus& ui) {
     if (!_screenOn) return;   // skip SPI writes while backlight is off
 
     unsigned long now = millis();
@@ -352,139 +329,35 @@ void Display::update(const InverterData& inv, const BatterySaver& bs,
         _needFullDraw = false;
     }
 
-    drawTopLinkDots(wifiOk, modbusOk, mqttOk);
+    drawTopLinkDots(ui.wifiOk, ui.modbusOk, ui.mqttOk);
 
-    if (_tab == TAB_FLOW) updateFlow(inv, bs, ctrl);
-    else                  updateSys(inv, bs, ctrl, _sn);
+    if (_tab == TAB_FLOW) updateFlow(inv, ui);
+    else                  updateSys(inv, ui);
 }
 
+void Display::updateFlow(const InverterData& inv, const UiStatus& ui) {
+    CardText c;
+    flowSolar(inv, c); redrawCard(CD_LX, CD_TY, c, _cdSolar);
+    flowGrid(inv, c);  redrawCard(CD_RX, CD_TY, c, _cdGrid);
+    flowHome(inv, c);  redrawCard(CD_LX, CD_BY, c, _cdHome);
+    flowBatt(inv, c);  redrawCard(CD_RX, CD_BY, c, _cdBatt);
 
-void Display::updateFlow(const InverterData& inv, const BatterySaver& bs,
-                         const ModeController& ctrl)
-{
-    char hr[14], v[16], r1[20], r2[20];
+    HubText h;
+    flowHub(inv, h);
+    redrawHub(h);
 
-    // 1. Top-Left: SOLAR (108 x 82)
-    snprintf(hr, sizeof(hr), "%.1fkWh", (double)inv.todayGeneration);
-    snprintf(v,  sizeof(v),  "%ld W",   (long)inv.pvPower);
-    snprintf(r1, sizeof(r1), "PV1: %5ld W", (long)inv.pv1Power);
-    snprintf(r2, sizeof(r2), "PV2: %5ld W", (long)inv.pv2Power);
-    redrawCard(CD_LX, CD_TY, CD_W, CD_H, "SOLAR", hr, v, r1, r2, -1, CLR_PV, _cdSolar);
+    FlowArms a;
+    flowArms(inv, a);
+    uint16_t gc = toneColor(inv.gridPower    >= 0 ? Tone::Export : Tone::Import);
+    uint16_t bc = toneColor(inv.batteryPower >= 0 ? Tone::Charge : Tone::Discharge);
+    redrawArm(0, a.pv,   true,        CLR_PV,        _arPv);
+    redrawArm(1, a.grid, a.gridToHub, gc,            _arGrid);
+    redrawArm(2, a.home, false,       ILI9341_WHITE, _arHome);
+    redrawArm(3, a.batt, a.battToHub, bc,            _arBatt);
 
-    // 2. Top-Right: GRID (108 x 82)
-    int32_t gw = inv.gridPower;
-    uint16_t gc = gw >= 0 ? CLR_EXPORT : CLR_IMPORT;
-    const char* gDir = gw > 0 ? "EXPORT" : (gw < 0 ? "IMPORT" : "IDLE");
-    snprintf(v, sizeof(v), "%ld W", (long)(gw >= 0 ? gw : -gw));
-    snprintf(r1, sizeof(r1), "%u/%u/%uV",
-             (unsigned)(inv.gridVoltage   + 0.5f),
-             (unsigned)(inv.gridVoltageL2 + 0.5f),
-             (unsigned)(inv.gridVoltageL3 + 0.5f));
-    if (inv.todayImport >= 100.0f || inv.todayExport >= 100.0f) {
-        snprintf(r2, sizeof(r2), "In %.0f Out %.0f",
-                 (double)inv.todayImport, (double)inv.todayExport);
-    } else {
-        snprintf(r2, sizeof(r2), "In %.1f Out %.1f",
-                 (double)inv.todayImport, (double)inv.todayExport);
-    }
-    redrawCard(CD_RX, CD_TY, CD_W, CD_H, "GRID", gDir, v, r1, r2, -1, gc, _cdGrid);
-
-    // 3. Bottom-Left: HOME (108 x 82) — no Total line
-    unsigned selfPct = 100;
-    if (inv.todayConsumption > 0.05f) {
-        float netSelf = inv.todayConsumption - inv.todayImport;
-        if (netSelf < 0) netSelf = 0;
-        selfPct = (unsigned)(netSelf * 100.0f / inv.todayConsumption + 0.5f);
-        if (selfPct > 100) selfPct = 100;
-    }
-    snprintf(hr, sizeof(hr), "Self %u%%", selfPct);
-    snprintf(v,  sizeof(v),  "%ld W",     (long)inv.loadPower);
-    snprintf(r1, sizeof(r1), "Today %.1f kWh", (double)inv.todayConsumption);
-    r2[0] = '\0';
-    redrawCard(CD_LX, CD_BY, CD_W, CD_H, "HOME", hr, v, r1, r2, -1, ILI9341_WHITE, _cdHome);
-
-    // 4. Bottom-Right: BATT (108 x 82) + graphical SOC bar
-    int32_t bw = inv.batteryPower;
-    uint16_t bc = bw >= 0 ? CLR_CHARGE : CLR_DISCHG;
-    const char* bDir = bw > 0 ? "CHG" : (bw < 0 ? "DIS" : "IDLE");
-    snprintf(v,  sizeof(v),  "%ld W", (long)(bw >= 0 ? bw : -bw));
-    snprintf(r1, sizeof(r1), "SOC %u%%   %dC",
-             (unsigned)inv.batterySOC, (int)inv.battTemp);
-    r2[0] = '\0';
-    int8_t soc = inv.batterySOC > 100 ? 100 : (int8_t)inv.batterySOC;
-    redrawCard(CD_RX, CD_BY, CD_W, CD_H, "BATT", bDir, v, r1, r2, soc, bc, _cdBatt);
-
-    // 5. Central INV Hub + 4 L-shaped flow arms
-    bool passiveOk = !inv.valid || inv.workingMode == WORK_MODE_PASSIVE;
-    redrawHub(inv, passiveOk);
-    redrawArm(0, inv.pvPower > 0,  true,     CLR_PV,   _arPv);
-    redrawArm(1, gw != 0,          gw < 0,   gc,       _arGrid);
-    redrawArm(2, inv.loadPower > 0,false,    ILI9341_WHITE, _arHome);
-    redrawArm(3, bw != 0,          bw < 0,   bc,       _arBatt);
-
-    // 6. Bottom Action Button
-    bool active = bs.isActive();
-    char line2[36];
-    if (!passiveOk) {
-        snprintf(line2, sizeof(line2), "WARN: NOT IN PASSIVE (%u)",
-                 (unsigned)inv.workingMode);
-    } else if (active && bs.strategy() == BatterySaver::BSAVE_NATIVE) {
-        snprintf(line2, sizeof(line2), "NATIVE [0..%ldkW]  PASSIVE",
-                 (long)(bs.maxPower() / 1000));
-    } else if (active) {
-        snprintf(line2, sizeof(line2), "LOOP Target: %ld W",
-                 (long)bs.targetPower());
-    } else {
-        snprintf(line2, sizeof(line2), "Mode: %s  (PASSIVE)",
-                 ctrl.currentMode());
-    }
-
-    if (!_btnValid || _btnActive != active) {
-        uint16_t bg = active ? 0x03E0 : 0x4000;
-        _tft.fillRect(BTN_X, BTN_Y, BTN_W, BTN_H, bg);
-        _tft.drawRect(BTN_X, BTN_Y, BTN_W, BTN_H, active ? CLR_ACTIVE : CLR_IMPORT);
-        _btnValid  = true;
-        _btnActive = active;
-        _btnLine1[0] = _btnLine2[0] = '\0';   // force text repaint
-    }
-    uint16_t btnBg = active ? 0x03E0 : 0x4000;
-    const char* line1 = active ? "BATT SAVE  ON" : "BATT SAVE OFF";
-    uint16_t fg       = active ? ILI9341_WHITE : 0xBDF7;
-    if (strcmp(_btnLine1, line1) != 0) {
-        int16_t ox = BTN_X + (BTN_W - strlen(_btnLine1) * CHAR_W * 2) / 2;
-        int16_t nx = BTN_X + (BTN_W - strlen(line1)     * CHAR_W * 2) / 2;
-        printOver(ox, nx, BTN_Y + 6, 2, fg, btnBg, _btnLine1, line1);
-        strncpy(_btnLine1, line1, sizeof(_btnLine1) - 1);
-        _btnLine1[sizeof(_btnLine1) - 1] = '\0';
-    }
-    if (strcmp(_btnLine2, line2) != 0) {
-        int16_t ox = BTN_X + (BTN_W - strlen(_btnLine2) * CHAR_W) / 2;
-        int16_t nx = BTN_X + (BTN_W - strlen(line2)     * CHAR_W) / 2;
-        printOver(ox, nx, BTN_Y + 28, 1, CLR_TARGET, btnBg, _btnLine2, line2);
-        strncpy(_btnLine2, line2, sizeof(_btnLine2) - 1);
-        _btnLine2[sizeof(_btnLine2) - 1] = '\0';
-    }
-}
-
-
-void Display::sysPrint(uint8_t idx, int16_t y, const char* text)
-{
-    if (_sysValid && strcmp(_sysCache[idx], text) == 0) return;
-    if (idx < SYS_LINES && _sysCache[idx][0]) {
-        _tft.setTextSize(1);
-        _tft.setTextColor(CLR_BG, CLR_BG);
-        _tft.setCursor(8, y);
-        _tft.print(_sysCache[idx]);
-    }
-    _tft.setTextSize(1);
-    _tft.setTextColor(CLR_LABEL, CLR_BG);
-    _tft.setCursor(8, y);
-    _tft.print(text);
-    if (idx < SYS_LINES) {
-        strncpy(_sysCache[idx], text, sizeof(_sysCache[0]) - 1);
-        _sysCache[idx][sizeof(_sysCache[0]) - 1] = '\0';
-    }
-    _sysValid = true;
+    ButtonText b;
+    flowButton(inv, ui, b);
+    redrawButton(b);
 }
 
 void Display::drawLogTail(int16_t y) {
@@ -514,9 +387,9 @@ void Display::drawLogTail(int16_t y) {
     int16_t line = 0;
     unsigned int col = 0;
     for (; i < e && line < maxRow; i++) {
-        char c = appLog.at(i);
-        if (c != '\n') {
-            if (col < sizeof(row) - 1) row[col++] = c;
+        char ch = appLog.at(i);
+        if (ch != '\n') {
+            if (col < sizeof(row) - 1) row[col++] = ch;
             continue;
         }
         row[col] = '\0';
@@ -534,37 +407,12 @@ void Display::drawLogTail(int16_t y) {
     _tft.setTextWrap(true);
 }
 
-void Display::updateSys(const InverterData& inv, const BatterySaver& bs,
-                        const ModeController& ctrl, const char* sn)
-{
-    char v[64];
-    snprintf(v, sizeof(v), "FW: %s", FW_VERSION);
-    sysPrint(0, 33, v);
-
-    snprintf(v, sizeof(v), "SN: %s", sn);
-    sysPrint(1, 43, v);
-
-    IPAddress ip = WiFi.localIP();      // no toString(): that allocated a String
-    unsigned long up = millis() / 1000;
-    snprintf(v, sizeof(v), "IP: %u.%u.%u.%u  Up: %lud %02lu:%02lu",
-             ip[0], ip[1], ip[2], ip[3],
-             up / 86400, (up / 3600) % 24, (up / 60) % 60);
-    sysPrint(2, 53, v);
-
-    snprintf(v, sizeof(v), "RSSI: %ld dBm   Heap: %u/%u kB (%u%%)",
-             (long)WiFi.RSSI(),
-             (unsigned)(heapStats.freeHeap / 1024),
-             (unsigned)(heapStats.maxBlock / 1024), (unsigned)heapStats.frag);
-    sysPrint(3, 63, v);
-
-    snprintf(v, sizeof(v), "Temp I/H/B: %d/%d/%dC  Self: %ldW",
-             (int)inv.inverterTemp, (int)inv.heatsinkTemp, (int)inv.battTemp,
-             (long)inv.inverterSelfPower);
-    sysPrint(4, 73, v);
-
-    snprintf(v, sizeof(v), "Mode: %s (%s)  Inv: %u",
-             ctrl.currentMode(), bs.strategyName(), (unsigned)inv.workingMode);
-    sysPrint(5, 83, v);
+void Display::updateSys(const InverterData& inv, const UiStatus& ui) {
+    char lines[FM_SYS_LINES][64];
+    sysLines(inv, ui, lines);
+    for (uint8_t i = 0; i < FM_SYS_LINES; i++)
+        drawCached(_sysCache[i], 8, 232, AL_LEFT, SYS_Y0 + i * SYS_DY, 1,
+                   CLR_LABEL, CLR_BG, lines[i]);
 
     if (!_logValid) {
         _tft.drawFastHLine(0, 96, 240, CLR_OFF);
@@ -576,32 +424,25 @@ void Display::updateSys(const InverterData& inv, const BatterySaver& bs,
     drawLogTail(112);
 }
 
-
 void Display::startCalibration() {
-    _calStep  = CAL_A;
+    _touch.startCalibration();
     _calDrawn = false;
-    _calRetry = false;
-    _cal.valid = false;
-    // If the wizard was started by a long press, the finger is still down:
-    // that press must not be mistaken for the first target tap.
-    _calIgnorePress = _touchedPrev;
-    _calNotice      = false;
     if (!_screenOn) wake();
-    appLog.add("TCH", "calibration started");
 }
 
 void Display::drawCalScreen() {
     static const int16_t tx[3] = {TCAL_LO_X, TCAL_HI_X, TCAL_LO_X};
     static const int16_t ty[3] = {TCAL_LO_Y, TCAL_LO_Y, TCAL_HI_Y};
+    uint8_t step = _touch.calStep();
     _tft.fillScreen(CLR_BG);
     drawCentered(120, "TOUCH CALIBRATION", 2, CLR_PV);
     char msg[32];
-    snprintf(msg, sizeof(msg), "tap the crosshair  %d of 3", _calStep + 1);
+    snprintf(msg, sizeof(msg), "tap the crosshair  %d of 3", step + 1);
     drawCentered(150, msg, 1, CLR_LABEL);
-    if (_calRetry)
+    if (_touch.calRetry())
         drawCentered(170, "bad samples - starting over", 1, CLR_IMPORT);
 
-    int16_t x = tx[_calStep], y = ty[_calStep];
+    int16_t x = tx[step], y = ty[step];
     _tft.drawCircle(x, y, 10, CLR_LABEL);
     _tft.drawCircle(x, y, 3, CLR_ACTIVE);
     _tft.drawFastHLine(x - 16, y, 33, CLR_ACTIVE);
@@ -609,131 +450,37 @@ void Display::drawCalScreen() {
     _calDrawn = true;
 }
 
-// Averages the readings taken while the finger is down: a single sample is
-// noisy, and the first few counts arrive while contact is still settling.
-bool Display::calPollTouch(bool down, unsigned long now) {
-    if (_calIgnorePress) {
-        if (down) { _lastTouch = now; return false; }
-        _calIgnorePress = false;
-        _touchedPrev    = false;
-        return false;
-    }
-    if (down) {
-        _lastTouch = now;
-        if (!_touchedPrev) {
-            _touchedPrev = true;
-            _pressStart  = now;
-            _calSumX = _calSumY = 0;
-            _calCount = 0;
-            return false;
-        }
-        if (now - _pressStart >= 60) {          // let the contact settle first
-            TS_Point p = _ts.getPoint();
-            _calSumX += p.x;
-            _calSumY += p.y;
-            _calCount++;
-        }
-        return false;
-    }
-    if (!_touchedPrev) return false;
-    _touchedPrev = false;
-    if (_calCount < 2) return false;             // too brief to trust
-
-    _calRaw[_calStep].x = (int16_t)(_calSumX / _calCount);
-    _calRaw[_calStep].y = (int16_t)(_calSumY / _calCount);
-    snprintf(_touchDbg, sizeof(_touchDbg), "cal %d raw %d,%d n=%d",
-             _calStep + 1, (int)_calRaw[_calStep].x, (int)_calRaw[_calStep].y,
-             (int)_calCount);
-    appLog.add("TCH", _touchDbg);
-
-    if (_calStep < CAL_C) { _calStep++; _calDrawn = false; return false; }
-
-    TouchCal built;
-    if (!touchCalBuild(_calRaw[0], _calRaw[1], _calRaw[2], built)) {
-        appLog.add("TCH", "calibration rejected: no usable travel");
-        _calStep  = CAL_A;
-        _calRetry = true;
-        _calDrawn = false;
-        return false;
-    }
-    _cal      = built;
-    _calStep  = CAL_DONE;
-    _needFullDraw = true;
-    snprintf(_touchDbg, sizeof(_touchDbg), "cal ok swap=%d x %d..%d y %d..%d",
-             (int)_cal.swap, (int)_cal.xLo, (int)_cal.xHi,
-             (int)_cal.yLo, (int)_cal.yHi);
-    appLog.add("TCH", _touchDbg);
-    if (_calSaved) _calSaved(_cal);
-    return false;
-}
-
-// Gesture-based, so it cannot be broken by panel rotation/wiring:
-//   press               -> wake if the backlight is off (consumes the gesture)
-//   release before 800ms -> short tap: toggle battery saver (FLOW tab only)
-//   held past 800ms      -> switch tab, fires once per press
 bool Display::pollTouch() {
-    unsigned long now = millis();
-    if (now - _lastPollAt < TS_POLL_MS) return false;
-    _lastPollAt = now;
-
-    uint32_t lastDown = (uint32_t)_lastDownAt;
-    bool down = touchDebouncedDown(_ts.touched(), _touchedPrev, (uint32_t)now,
-                                   lastDown);
-    _lastDownAt = lastDown;
-
-    if (calibrating()) return calPollTouch(down, now);
-
-    if (down) {
-        _lastTouch = now;
-        if (!_touchedPrev) {                       // press
-            _touchedPrev = true;
-            _pressStart  = now;
-            _longFired   = false;
-            _tapX = _tapY = -1;
-            if (!_screenOn) { wake(); _longFired = true; return false; }
-            TS_Point p = _ts.getPoint();
-            if (_cal.valid) {
-                touchCalApply(_cal, p.x, p.y, _tapX, _tapY);
-                snprintf(_touchDbg, sizeof(_touchDbg), "raw %d,%d -> %d,%d",
-                         (int)p.x, (int)p.y, (int)_tapX, (int)_tapY);
-            } else {
-                snprintf(_touchDbg, sizeof(_touchDbg), "raw %d,%d (uncal)",
-                         (int)p.x, (int)p.y);
-            }
-            appLog.add("TCH", _touchDbg);
-            return false;
-        }
-        if (!_longFired && now - _pressStart >= TS_LONG_MS) {
-            _longFired = true;                     // long press: switch tab
-            setTab(_tab == TAB_FLOW ? TAB_SYS : TAB_FLOW);
-            appLog.add("TCH", _tab == TAB_SYS ? "long press -> SYS"
-                                              : "long press -> FLOW");
-        }
-        if (!_calNotice && now - _pressStart >= TS_CAL_MS / 2) {
-            _calNotice = true;
-            drawHint();
-        }
-        if (now - _pressStart >= TS_CAL_MS) startCalibration();
+    uint8_t ev = _touch.poll(_screenOn);
+    if (ev == 0) return false;
+    if (ev & TouchInput::TE_WAKE) { wake(); return false; }
+    if (ev & TouchInput::TE_CAL_START) {
+        _calDrawn = false;
+        if (!_screenOn) wake();
         return false;
     }
+    if (ev & TouchInput::TE_CAL_REDRAW) _calDrawn = false;
+    if (ev & TouchInput::TE_CAL_DONE)   _needFullDraw = true;
+    if (ev & TouchInput::TE_LONG) {                  // long press: switch tab
+        setTab(_tab == TAB_FLOW ? TAB_SYS : TAB_FLOW);
+        appLog.add("TCH", _tab == TAB_SYS ? "long press -> SYS"
+                                          : "long press -> FLOW");
+    }
+    if (ev & TouchInput::TE_HINT) drawHint();
+    if (!(ev & TouchInput::TE_TAP)) return false;
 
-    if (!_touchedPrev) return false;
-    _touchedPrev = false;                          // release
-    if (_calNotice) { _calNotice = false; drawHint(); }
-    bool shortTap = !_longFired && (now - _pressStart) >= TS_MIN_TAP_MS;
-    if (!shortTap) return false;
-
-    if (_cal.valid && _tapX >= 0) {                // calibrated: use regions
-        if (_tapY < TAB_H) {
-            setTab(_tapX < TAB_FLOW_X1 ? TAB_FLOW : TAB_SYS);
+    int16_t tx = _touch.tapX(), ty = _touch.tapY();
+    if (_touch.cal().valid && tx >= 0) {             // calibrated: use regions
+        if (ty < TAB_H) {
+            setTab(tx < TAB_FLOW_X1 ? TAB_FLOW : TAB_SYS);
             return false;
         }
-        bool inBtn = _tab == TAB_FLOW && _tapX >= BTN_X && _tapX < BTN_X + BTN_W
-                     && _tapY >= BTN_Y && _tapY < BTN_Y + BTN_H;
+        bool inBtn = _tab == TAB_FLOW && tx >= BTN_X && tx < BTN_X + BTN_W
+                     && ty >= BTN_Y && ty < BTN_Y + BTN_H;
         if (inBtn) appLog.add("TCH", "button -> toggle saver");
         return inBtn;
     }
-    if (_tab != TAB_FLOW) return false;            // uncalibrated fallback
+    if (_tab != TAB_FLOW) return false;              // uncalibrated fallback
     appLog.add("TCH", "tap -> toggle saver");
     return true;
 }
@@ -749,7 +496,7 @@ void Display::wake() {
 
 void Display::handleDimming() {
     if (_brightness == 0) { _screenOn = false; return; }
-    if ((millis() - _lastTouch) > SCREEN_DIM_MS) {
+    if ((millis() - _touch.lastTouchAt()) > SCREEN_DIM_MS) {
         if (millis() - _lastDimStep < 40) return;   // rate-limit, no blocking
         _lastDimStep = millis();
         _brightness--;

@@ -8,6 +8,7 @@
 #include "inverter/Inverter.cpp"
 #include "control/BatterySaver.cpp"
 #include "control/ModeController.cpp"
+#include "telemetry/StateJson.cpp"
 
 namespace {
 
@@ -146,7 +147,7 @@ int32_t  FakeInverterBus::lastMaxWritten    = -999999;
 
 TEST(TelemetrySchema, AllKeysAndNamesAreUniqueAndComplete) {
     constexpr size_t N = sizeof(ALL_SCHEMA) / sizeof(ALL_SCHEMA[0]);
-    EXPECT_EQ(N, 48u);
+    EXPECT_EQ(N, 49u);
     for (size_t i = 0; i < N; i++) {
         ASSERT_NE(ALL_SCHEMA[i].key, nullptr);
         ASSERT_NE(ALL_SCHEMA[i].name, nullptr);
@@ -157,6 +158,54 @@ TEST(TelemetrySchema, AllKeysAndNamesAreUniqueAndComplete) {
             EXPECT_STRNE(ALL_SCHEMA[i].name, ALL_SCHEMA[j].name);
         }
     }
+}
+
+// The document MQTT publishes and /json serves: every schema field exactly
+// once, plus the control/status fields the web UI and HA rely on.
+TEST(StateJson, CarriesEverySchemaFieldAndControlState) {
+    FakeInverterBus::reset();
+    FakeInverterBus::gridPowerW = -1500;
+    Modbus mb;
+    Inverter inv(mb);
+    BatterySaver bs(inv);
+    EEConfig cfg;
+    cfg.begin();
+    ModeController ctrl(inv, bs, cfg);
+    ASSERT_TRUE(inv.pollStep());
+    ctrl.setCharge(2500);
+
+    JsonDocument doc;
+    LinkStatus link;
+    link.wifiOk = true;
+    link.uptimeMs = 4242;
+    fillStateJson(doc, inv, bs, ctrl, link);
+
+    for (const SchemaEntry& e : ALL_SCHEMA)
+        EXPECT_TRUE(doc[e.key].is<JsonVariantConst>() && !doc[e.key].isNull()) << e.key;
+    EXPECT_EQ(doc["grid_power"].as<int>(), -1500);
+    EXPECT_STREQ(doc["mode"].as<const char*>(), "charge");
+    EXPECT_EQ(doc["charge_power"].as<int>(), 2500);
+    EXPECT_FALSE(doc["battery_save"].as<bool>());
+    EXPECT_STREQ(doc["bsave_strategy"].as<const char*>(), "off");
+    EXPECT_STREQ(doc["working_mode_name"].as<const char*>(), "Passive");
+    EXPECT_TRUE(doc["wifi_ok"].as<bool>());
+    EXPECT_EQ(doc["uptime"].as<uint32_t>(), 4242u);
+    EXPECT_TRUE(doc["modbus_ok"].as<bool>());
+    EXPECT_FALSE(doc["data_fresh"].as<bool>());   // only GRID read so far
+}
+
+TEST(Integration, SelfPowerDerivedOnlyFromACompleteFastCycle) {
+    FakeInverterBus::reset();
+    FakeInverterBus::battPowerW = 2000;
+    Modbus mb;
+    Inverter inv(mb);
+    ASSERT_TRUE(inv.pollStep());      // GRID
+    EXPECT_FALSE(inv.data().fresh());
+    inv.pollStep();                   // PV
+    EXPECT_FALSE(inv.data().fresh());
+    inv.pollStep();                   // BATT
+    EXPECT_TRUE(inv.data().fresh());
+    EXPECT_EQ(inv.data().blockOk & BLOCK_FAST_MASK, BLOCK_FAST_MASK);
 }
 
 TEST(Integration, OptionANativeWindowUsedWhenReadbackSucceeds) {
@@ -172,7 +221,7 @@ TEST(Integration, OptionANativeWindowUsedWhenReadbackSucceeds) {
     cfg.begin();
     ModeController ctrl(inv, bs, cfg);
 
-    ctrl.setMode("battery_saver");
+    ctrl.setMode(Mode::BatterySaver);
     ASSERT_TRUE(inv.pollStep());   // POLL_GRID
 
     // First update probes Option A [0, 20000] and verifies readback -> BSAVE_NATIVE
@@ -205,7 +254,7 @@ TEST(Integration, OptionBFallbackAndSingleIntegrationWhenReadbackFails) {
     cfg.begin();
     ModeController ctrl(inv, bs, cfg);
 
-    ctrl.setMode("battery_saver");
+    ctrl.setMode(Mode::BatterySaver);
     EXPECT_EQ(FakeInverterBus::fc16Count, 0u);
 
     // Step 1: link recovery probe + POLL_GRID -> reads 600 W export, bumps sampleSeq
@@ -255,7 +304,7 @@ TEST(Integration, OptionAFallsBackToLoopWhenInverterIgnoresWindowAtRuntime) {
     cfg.begin();
     ModeController ctrl(inv, bs, cfg);
 
-    ctrl.setMode("battery_saver");
+    ctrl.setMode(Mode::BatterySaver);
     ASSERT_TRUE(inv.pollStep());
     bs.update();
     ASSERT_EQ(bs.strategy(), BatterySaver::BSAVE_NATIVE);
@@ -291,17 +340,85 @@ TEST(Integration, ReconcileRetriesFailedWriteAndStopsOnceSynced) {
     EXPECT_EQ(FakeInverterBus::fc16Count, 1u);
     EXPECT_NE(FakeInverterBus::lastMaxWritten, 8000);
 
-    // Next reconcile() tick retries automatically and succeeds
+    // Next tick retries automatically and succeeds
     fakeClock().now += 3000;
-    ctrl.reconcile();
+    ctrl.tick();
     EXPECT_EQ(FakeInverterBus::fc16Count, 2u);
     EXPECT_EQ(FakeInverterBus::lastMinWritten, -8000);
     EXPECT_EQ(FakeInverterBus::lastMaxWritten,  8000);
 
-    // Subsequent reconcile() ticks do not write to the inverter at all
+    // Subsequent ticks do not write to the inverter at all
     for (int i = 0; i < 10; i++) {
         fakeClock().now += 3000;
-        ctrl.reconcile();
+        ctrl.tick();
     }
     EXPECT_EQ(FakeInverterBus::fc16Count, 2u);
+}
+
+// LCD button, web toggle and the HA switch must all mean the same "off".
+TEST(Integration, SaverOffFromAnySurfaceReturnsToAutoWithOneWrite) {
+    for (int surface = 0; surface < 2; surface++) {
+        FakeInverterBus::reset();
+        Modbus mb;
+        Inverter inv(mb);
+        BatterySaver bs(inv);
+        EEConfig cfg;
+        cfg.begin();
+        ModeController ctrl(inv, bs, cfg);
+        ASSERT_TRUE(inv.pollStep());
+
+        ctrl.setMode(Mode::BatterySaver);
+        ctrl.tick();
+        ASSERT_EQ(bs.strategy(), BatterySaver::BSAVE_NATIVE);
+        uint32_t before = FakeInverterBus::fc16Count;
+
+        Command off;
+        if (surface == 0) ctrl.toggleBatterySaver();          // LCD / web
+        else { ASSERT_TRUE(parseCommand("battery_save", "off", off)); ctrl.apply(off); }  // HA
+
+        EXPECT_EQ(ctrl.mode(), Mode::Auto);
+        EXPECT_FALSE(bs.isActive());
+        EXPECT_EQ(FakeInverterBus::fc16Count, before + 1);
+        EXPECT_EQ(FakeInverterBus::lastMinWritten, -AUTO_LIMIT_DEFAULT);
+        EXPECT_EQ(FakeInverterBus::lastMaxWritten,  AUTO_LIMIT_DEFAULT);
+        EXPECT_STREQ(cfg.mode(), "auto");
+    }
+}
+
+// A retained MQTT "on" re-delivered on every reconnect must not re-probe.
+TEST(Integration, RepeatedSaverOnDoesNotRewrite) {
+    FakeInverterBus::reset();
+    Modbus mb;
+    Inverter inv(mb);
+    BatterySaver bs(inv);
+    EEConfig cfg;
+    cfg.begin();
+    ModeController ctrl(inv, bs, cfg);
+    ASSERT_TRUE(inv.pollStep());
+
+    Command on;
+    ASSERT_TRUE(parseCommand("battery_save", "on", on));
+    ctrl.apply(on);
+    ctrl.tick();
+    ASSERT_EQ(bs.strategy(), BatterySaver::BSAVE_NATIVE);
+    uint32_t writes = FakeInverterBus::fc16Count;
+    for (int i = 0; i < 5; i++) {
+        ctrl.apply(on);
+        ctrl.tick();
+    }
+    EXPECT_EQ(bs.strategy(), BatterySaver::BSAVE_NATIVE);
+    EXPECT_EQ(FakeInverterBus::fc16Count, writes);
+}
+
+TEST(Integration, RestoreRejectsUnknownStoredMode) {
+    FakeInverterBus::reset();
+    Modbus mb;
+    Inverter inv(mb);
+    BatterySaver bs(inv);
+    EEConfig cfg;
+    cfg.begin();
+    cfg.setMode("chargeX");
+    ModeController ctrl(inv, bs, cfg);
+    ctrl.restore();
+    EXPECT_EQ(ctrl.mode(), Mode::Auto);
 }

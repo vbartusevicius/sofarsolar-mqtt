@@ -63,30 +63,6 @@ inline bool saverNativeShouldFallback(int32_t gridPower, int32_t batteryPower,
     return streak >= BSAVE_NATIVE_FAIL_STREAK;
 }
 
-// Maps a static control mode ("charge", "standby", "auto") to its passive
-// power range [outMin, outMax]. Returns false for dynamic/unknown modes.
-inline bool modeDesiredPassiveRange(const char* mode, int32_t chargePower,
-                                    int32_t autoLimit,
-                                    int32_t& outMin, int32_t& outMax)
-{
-    if (!mode) return false;
-    if (mode[0] == 'c' && mode[1] == 'h') {   // "charge"
-        outMin = outMax = chargePower;
-        return true;
-    }
-    if (mode[0] == 's' && mode[1] == 't') {   // "standby"
-        outMin = outMax = 0;
-        return true;
-    }
-    if (mode[0] == 'a' && mode[1] == 'u') {   // "auto"
-        int32_t lim = autoLimit > 0 ? autoLimit : 16384;
-        outMin = -lim;
-        outMax = lim;
-        return true;
-    }
-    return false;
-}
-
 // Write the target only when: changed by ≥ minDelta, crossing 0, or the
 // keep-alive is due.  Never write during a sustained 0 W idle (night).
 // zeroTiming is an explicit flag rather than "zeroStart != 0": millis()

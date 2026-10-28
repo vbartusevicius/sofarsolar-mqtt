@@ -23,10 +23,6 @@ public:
     bool ready()     const { return _ready; }
     bool connected() { return _mqtt.connected(); }
 
-    // Fills the state document; the web server streams it straight to the
-    // socket instead of materialising a String.
-    void fillState(JsonDocument& doc);
-
 private:
     EEConfig&       _cfg;
     Inverter&       _inv;
@@ -45,10 +41,7 @@ private:
     void checkLiveness();
     void sendEchoPing();
     void forceReconnect(const char* reason);
-
-    static MqttManager* _instance;
-    static void callbackTrampoline(char* topic, byte* payload, unsigned int len);
-    void handleMessage(const char* topic, const char* msg);
+    void onMessage(const char* topic, const uint8_t* payload, unsigned int len);
 };
 
 #endif

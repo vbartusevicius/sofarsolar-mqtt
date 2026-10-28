@@ -1,57 +1,49 @@
 #include "network/MqttManager.h"
 #include <ArduinoJson.h>
-#include "util/HeapStats.h"
 #include "config/EEConfig.h"
 #include "inverter/Inverter.h"
-#include "inverter/TelemetrySchema.h"
 #include "control/BatterySaver.h"
+#include "control/Command.h"
 #include "control/ModeController.h"
 #include "ha/Discovery.h"
+#include "telemetry/LinkStatusNow.h"
+#include "telemetry/StateJson.h"
 #include "util/AppLog.h"
 #include "util/ChunkedWriter.h"
-#include "Version.h"
-
-MqttManager* MqttManager::_instance = nullptr;
 
 MqttManager::MqttManager(EEConfig& cfg, Inverter& inv,
                          BatterySaver& bs, ModeController& ctrl)
     : _cfg(cfg), _inv(inv), _bs(bs), _ctrl(ctrl), _mqtt(_wifiClient)
-{
-    _instance = this;
-}
+{}
 
 static bool endsWith(const char* str, const char* suffix) {
     size_t slen = strlen(str), xlen = strlen(suffix);
     return slen >= xlen && strcmp(str + slen - xlen, suffix) == 0;
 }
 
-void MqttManager::callbackTrampoline(char* topic, byte* payload,
-                                     unsigned int len)
+void MqttManager::onMessage(const char* topic, const uint8_t* payload,
+                            unsigned int len)
 {
-    if (!_instance || !topic) return;
+    if (!topic) return;
     char msg[64];
     unsigned int copyLen = len < sizeof(msg) - 1 ? len : sizeof(msg) - 1;
     if (copyLen > 0 && payload) memcpy(msg, payload, copyLen);
     msg[copyLen] = '\0';
-    _instance->handleMessage(topic, msg);
-}
 
-void MqttManager::handleMessage(const char* topic, const char* msg) {
     if (endsWith(topic, "/ping")) {
         uint32_t seq = (uint32_t)strtoul(msg, nullptr, 10);
         if ((uint32_t)(seq - _echoSeq) < 0x80000000UL) _echoSeq = seq;
         return;
     }
-    if (endsWith(topic, "/set/battery_save")) {
-        bool on = strcmp(msg, "on") == 0 || strcmp(msg, "true") == 0 ||
-                  strcmp(msg, "1") == 0;
-        if (on)                  _ctrl.setMode("battery_saver");
-        else if (_bs.isActive()) _ctrl.setMode("auto");
+    const char* key = mqttCommandKey(topic);
+    Command cmd;
+    if (key && parseCommand(key, msg, cmd)) {
+        _ctrl.apply(cmd);
+        return;
     }
-    else if (endsWith(topic, "/set/charge"))  { _ctrl.setCharge(atol(msg)); }
-    else if (endsWith(topic, "/set/standby")) { _ctrl.setMode("standby"); }
-    else if (endsWith(topic, "/set/auto"))    { _ctrl.setAuto(atol(msg)); }
-    else if (endsWith(topic, "/set/mode"))    { _ctrl.setMode(msg); }
+    char lb[80];
+    snprintf(lb, sizeof(lb), "ignored %s='%s'", key ? key : topic, msg);
+    appLog.add("MQTT", lb);
 }
 
 void MqttManager::begin() {
@@ -79,7 +71,7 @@ void MqttManager::connect() {
     appLog.add("MQTT", logBuf);
 
     _mqtt.setServer(_cfg.mqttHost(), port);
-    _mqtt.setCallback(callbackTrampoline);
+    _mqtt.setCallback([this](char* t, uint8_t* p, unsigned int l) { onMessage(t, p, l); });
 
     if (_mqtt.connect(clientId, _cfg.mqttUser(), _cfg.mqttPass(),
                       willTopic, 0, true, "offline"))
@@ -153,7 +145,7 @@ void MqttManager::publish() {
         return;
     }
     JsonDocument doc;
-    fillState(doc);
+    fillStateJson(doc, _inv, _bs, _ctrl, linkStatusNow(true));
     char topic[80];
     snprintf(topic, sizeof(topic), "%s/state", _cfg.name());
 
@@ -173,40 +165,4 @@ void MqttManager::publish() {
     // A half-written packet desyncs the MQTT stream; drop the session
     // rather than block on the same stalled socket every 10 s.
     if (!ok) forceReconnect("publish write failed");
-}
-
-void MqttManager::fillState(JsonDocument& doc) {
-    const InverterData& d = _inv.data();
-    char fb[16];
-
-#define FILL_INT_FIELD(k, m, n, u, dc, sc)      doc[k] = d.m;
-#define FILL_FLT_FIELD(k, m, dec, n, u, dc, sc) doc[k] = serialized(dtostrf(d.m, 0, dec, fb));
-    SOFAR_TELEMETRY_INT_FIELDS(FILL_INT_FIELD)
-    SOFAR_TELEMETRY_FLOAT_FIELDS(FILL_FLT_FIELD)
-#undef FILL_INT_FIELD
-#undef FILL_FLT_FIELD
-
-    // Mode & control
-    doc["battery_save"]        = _bs.isActive();
-    doc["battery_save_target"] = _bs.targetPower();
-    doc["bsave_strategy"]      = _bs.strategyName();
-    // Control state
-    doc["mode"]          = _ctrl.currentMode();
-    doc["charge_power"]  = _ctrl.chargePower();
-    doc["auto_limit"]    = _ctrl.autoLimit();
-    // Status
-    doc["serial_number"] = _inv.serialNumber();
-    doc["firmware"]      = FW_VERSION;
-    doc["modbus_ok"]     = !_inv.hasError();
-    doc["passive_mode_ok"] = _inv.isPassiveMode();
-    doc["mqtt_ok"]       = _mqtt.connected();
-    doc["wifi_ok"]       = WiFi.isConnected();
-    doc["uptime"]        = millis();
-    doc["free_heap"]     = heapStats.freeHeap;
-    doc["heap_frag"]     = heapStats.frag;
-    doc["max_free_block"]= heapStats.maxBlock;
-    // Passive-mode write policy, read from the inverter (0x1184/0x1185)
-    doc["passive_timeout_s"] = _inv.passiveTimeoutS();
-    doc["timeout_action"]    = _inv.timeoutAction();
-    doc["keepalive_s"]       = _inv.keepaliveMs() / 1000;
 }

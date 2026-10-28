@@ -21,6 +21,8 @@ static const HaSensor SENSORS[] = {
     SOFAR_TELEMETRY_FLOAT_FIELDS(HA_FLT_ROW)
     { "battery_save_target", "Battery Save Target", "W", "power", "measurement" },
     { "firmware",            "Firmware Version",    "",  nullptr, nullptr },
+    { "run_state_name",      "Run State Name",      "",  nullptr, nullptr },
+    { "working_mode_name",   "Working Mode Name",   "",  nullptr, nullptr },
 };
 
 #undef HA_INT_ROW

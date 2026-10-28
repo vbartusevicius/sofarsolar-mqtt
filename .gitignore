@@ -4,3 +4,4 @@
 .DS_Store
 compile_commands.json
 .clangd
+src/web/WebPage.gz.h

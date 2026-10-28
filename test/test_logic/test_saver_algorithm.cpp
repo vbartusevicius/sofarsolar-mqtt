@@ -125,24 +125,6 @@ TEST(SaverIntegrateSample, IgnoresUninitializedSampleZero) {
     EXPECT_EQ(lastSeq, 0u);
 }
 
-TEST(ModeReconcile, MapsStaticModesAndSkipsDynamic) {
-    int32_t lo = -1, hi = -1;
-    EXPECT_TRUE(modeDesiredPassiveRange("charge", 3500, 16384, lo, hi));
-    EXPECT_EQ(lo, 3500);
-    EXPECT_EQ(hi, 3500);
-
-    EXPECT_TRUE(modeDesiredPassiveRange("standby", 3500, 16384, lo, hi));
-    EXPECT_EQ(lo, 0);
-    EXPECT_EQ(hi, 0);
-
-    EXPECT_TRUE(modeDesiredPassiveRange("auto", 3500, 8000, lo, hi));
-    EXPECT_EQ(lo, -8000);
-    EXPECT_EQ(hi, 8000);
-
-    EXPECT_FALSE(modeDesiredPassiveRange("battery_saver", 3500, 8000, lo, hi));
-    EXPECT_FALSE(modeDesiredPassiveRange("unknown", 3500, 8000, lo, hi));
-}
-
 TEST(NativeWindowCheck, DetectsUncommandedDischargeAndIgnoredSurplus) {
     // Healthy: grid near 0, battery charging 1500 W at 60% SOC
     EXPECT_FALSE(saverNativeWindowViolated(40, 1500, 60, 20000, 100));

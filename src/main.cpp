@@ -19,6 +19,7 @@
 #include "network/WiFiSetup.h"
 #include "network/MqttManager.h"
 #include "web/SofarWebServer.h"
+#include "Version.h"
 
 static EEConfig       eeConfig;
 static Modbus         modbus;
@@ -64,6 +65,29 @@ static void reportPreviousStall() {
     ESP.rtcUserMemoryWrite(LOOP_WD_RTC_OFS, (uint32_t*)&r, sizeof(r));
 }
 
+static UiStatus uiStatusNow() {
+    UiStatus s;
+    s.wifiOk        = WiFi.isConnected();
+    s.modbusOk      = !inverter.hasError();
+    s.mqttOk        = mqttMgr.connected();
+    s.saverActive   = control.saverActive();
+    s.saverNative   = bsave.strategy() == BatterySaver::BSAVE_NATIVE;
+    s.saverMaxPower = bsave.maxPower();
+    s.saverTarget   = bsave.targetPower();
+    s.strategyName  = bsave.strategyName();
+    s.modeName      = control.modeName();
+    s.serial        = inverter.serialNumber();
+    s.firmware      = FW_VERSION;
+    s.uptimeS       = millis() / 1000;
+    IPAddress ip    = WiFi.localIP();   // no toString(): that allocated a String
+    for (int i = 0; i < 4; i++) s.ip[i] = ip[i];
+    s.rssi          = WiFi.RSSI();
+    s.freeHeap      = heapStats.freeHeap;
+    s.maxBlock      = heapStats.maxBlock;
+    s.heapFrag      = heapStats.frag;
+    return s;
+}
+
 void setup() {
     // First line in the log after any restart: if the device ever does reboot
     // unattended, this says why (watchdog, exception, power, or our own call).
@@ -90,11 +114,13 @@ void setup() {
     inverter.readPassiveTimeout();   // decides whether keep-alives are needed
 
     if (!configLoaded) {
+        char name[EE_NAME_LEN];
         if (inverter.serialNumber()[0] != '\0') {
-            snprintf(eeConfig.name(), EE_NAME_LEN, "sofar_%s", inverter.serialNumber());
+            snprintf(name, sizeof(name), "sofar_%s", inverter.serialNumber());
         } else {
-            snprintf(eeConfig.name(), EE_NAME_LEN, "sofar_%06x", (unsigned int)(ESP.getChipId() & 0xFFFFFF));
+            snprintf(name, sizeof(name), "sofar_%06x", (unsigned int)(ESP.getChipId() & 0xFFFFFF));
         }
+        eeConfig.setName(name);
     }
 
     control.restore();   // resume the mode that was running before the reboot
@@ -111,13 +137,7 @@ void setup() {
         STAGE(STAGE_POLL);
         inverter.pollStep();
         STAGE(STAGE_BSAVE);
-        bsave.update();
-        control.reconcile();
-    });
-    taskManager.scheduleFixedRate(INTERVAL_BSAVE,      []() {
-        STAGE(STAGE_BSAVE);
-        bsave.update();
-        control.reconcile();
+        control.tick();
     });
     taskManager.scheduleFixedRate(INTERVAL_MQTT_PUB,   []() {
         STAGE(STAGE_MQTT_PUB);
@@ -134,8 +154,7 @@ void setup() {
     });
     taskManager.scheduleFixedRate(INTERVAL_DISPLAY,    []() {
         STAGE(STAGE_DISPLAY);
-        display.update(inverter.data(), bsave, control, inverter.serialNumber(),
-                       WiFi.isConnected(), !inverter.hasError(), mqttMgr.connected());
+        display.update(inverter.data(), uiStatusNow());
     });
     taskManager.scheduleFixedRate(1000, []() { heapStats.update(); });
     // Re-checked hourly: the timeout can be changed from the inverter's panel
