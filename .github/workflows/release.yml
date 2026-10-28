@@ -32,6 +32,9 @@ jobs:
       - name: Build firmware
         run: pio run -e esp8266
 
+      - name: Check firmware artifact
+        run: test -s .pio/build/esp8266/firmware.bin
+
       - name: Publish GitHub release with binaries
         uses: softprops/action-gh-release@v2
         with:
@@ -39,4 +42,5 @@ jobs:
           name: ${{ env.VERSION }}
           files: |
             .pio/build/esp8266/firmware.bin
+          fail_on_unmatched_files: true
           generate_release_notes: true

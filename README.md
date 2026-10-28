@@ -169,7 +169,7 @@ pio run -t upload  # flash via USB
 
 IDE note: `.clangd` is machine-specific and gitignored; `tools/gen_clangd.py` regenerates it automatically on every build (or run `python3 tools/gen_clangd.py` manually).
 
-The web UI is edited as plain HTML in `src/web/WebPage.html` (open it directly in a browser to work on it). `tools/embed_web.py` runs before every build and generates the gzipped `src/web/WebPage.gz.h` (gitignored).
+The web UI is edited as plain HTML in `src/web/WebPage.html` (open it directly in a browser to work on it). `tools/embed_web.py` runs before every build and generates the gzipped `WebPage.gz.h` inside the build directory.
 
 ### Dependencies (auto-installed)
 

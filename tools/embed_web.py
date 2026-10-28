@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Embed src/web/WebPage.html as a gzipped PROGMEM array.
 
-Generates src/web/WebPage.gz.h (gitignored) before every PlatformIO build,
-or manually with:  python3 tools/embed_web.py
+Generates <build dir>/generated/WebPage.gz.h before every PlatformIO build
+and adds that directory to the include path, or manually with:
+    python3 tools/embed_web.py        (writes .pio/generated/WebPage.gz.h)
 
-The page is ~15 kB of HTML and ~4 kB gzipped; every browser accepts
+The page is ~21 kB of HTML and ~6 kB gzipped; every browser accepts
 Content-Encoding: gzip, so serving the compressed bytes saves flash and,
 at a weak RSSI, most of the page-load time. The output is deterministic
 (mtime=0) and only rewritten when it changes, so it never forces a rebuild.
+
+The header must NOT be generated under src/: PlatformIO hashes the list of
+source files there, so a file that appears mid-build makes the post-build
+compiledb run (tools/compiledb_hook.py) see a "changed project" and clean
+the build directory — deleting firmware.bin on every fresh checkout (CI).
 """
 import gzip
 import os
@@ -15,11 +21,14 @@ import os
 try:
     Import("env")  # noqa: F821  (PlatformIO SCons)
     ROOT = env["PROJECT_DIR"]  # noqa: F821
+    OUT_DIR = os.path.join(env.subst("$BUILD_DIR"), "generated")  # noqa: F821
+    env.Append(CPPPATH=[OUT_DIR])  # noqa: F821
 except NameError:
     ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    OUT_DIR = os.path.join(ROOT, ".pio", "generated")
 
 SRC = os.path.join(ROOT, "src", "web", "WebPage.html")
-DST = os.path.join(ROOT, "src", "web", "WebPage.gz.h")
+DST = os.path.join(OUT_DIR, "WebPage.gz.h")
 
 
 def render(data: bytes) -> str:
@@ -49,6 +58,7 @@ def main():
                 return
     except FileNotFoundError:
         pass
+    os.makedirs(OUT_DIR, exist_ok=True)
     with open(DST, "w", encoding="utf-8") as f:
         f.write(out)
 

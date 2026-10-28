@@ -91,7 +91,13 @@ Other tooling:
 - One state document: `telemetry/StateJson.cpp` fills it for both MQTT and
   `/json`.
 - The web UI is plain HTML in `src/web/WebPage.html`; `tools/embed_web.py`
-  (pre-build) gzips it into the gitignored `src/web/WebPage.gz.h`.
+  (pre-build) gzips it into `<build dir>/generated/WebPage.gz.h` and adds that
+  to the include path. **Never generate files under `src/` during a build**:
+  PlatformIO hashes the src file list, so the nested `compiledb` run from
+  `tools/compiledb_hook.py` sees a "changed project", cleans the build dir and
+  deletes `firmware.bin` — silently, on every fresh checkout (this shipped one
+  empty release). CI and the release workflow now fail if `firmware.bin` is
+  missing.
 - **Security is deliberately out of scope.** Web endpoints are unauthenticated
   and MQTT credentials are stored and served in plaintext. Do not "fix" this
   unless asked; do mention it if relevant.

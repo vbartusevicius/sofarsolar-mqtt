@@ -25,6 +25,9 @@ jobs:
       - name: Build firmware
         run: pio run -e esp8266
 
+      - name: Check firmware artifact
+        run: test -s .pio/build/esp8266/firmware.bin
+
   test:
     runs-on: ubuntu-latest
 

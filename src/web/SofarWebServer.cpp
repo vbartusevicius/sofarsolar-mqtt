@@ -12,7 +12,7 @@
 #include "display/Display.h"
 #include "telemetry/LinkStatusNow.h"
 #include "telemetry/StateJson.h"
-#include "web/WebPage.gz.h"
+#include "WebPage.gz.h"   // generated into the build dir by tools/embed_web.py
 #include "util/AppLog.h"
 #include "util/ChunkedWriter.h"
 #include "Version.h"
